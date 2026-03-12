@@ -5,3 +5,4 @@ fpdf
 openpyxl
 xlsxwriter
 st-gsheets-connection
+gspread
