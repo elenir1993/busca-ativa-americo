@@ -160,13 +160,13 @@ if menu == "Diagnóstico Geral":
             # Formatos
             formato_cabecalho = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#1E3A8A', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
             formato_celula = workbook.add_format({'border': 1, 'valign': 'vcenter'})
-            formato_perc = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00%'}) # Formato % adicionado aqui
+            formato_perc = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00%'})
             
             for col_num, value in enumerate(df_excel.columns.values):
                 worksheet.write(0, col_num, value, formato_cabecalho)
                 if value == "Nome": worksheet.set_column(col_num, col_num, 40, formato_celula)
                 elif value == "Turma": worksheet.set_column(col_num, col_num, 30, formato_celula)
-                elif value == "Presenca_Anual": worksheet.set_column(col_num, col_num, 18, formato_perc) # Aplica % na coluna
+                elif value == "Presenca_Anual": worksheet.set_column(col_num, col_num, 18, formato_perc)
                 else: worksheet.set_column(col_num, col_num, 15, formato_celula)
 
         excel_data = output.getvalue()
@@ -183,7 +183,7 @@ if menu == "Diagnóstico Geral":
             hoje = datetime.now().strftime("%d/%m/%Y")
             resumo = criticos["Turma"].value_counts()
 
-            # LÓGICA DE HISTÓRICO NA NUVEM
+            # LÓGICA DE HISTÓRICO NA NUVEM (COM LIMPEZA DE DATAS DUPLICADAS)
             todas_linhas = planilha.get_all_values()
             linha_hist = -1
             hist_dados = []
@@ -194,19 +194,25 @@ if menu == "Diagnóstico Geral":
                     if len(linha) > 1: hist_dados = json.loads(linha[1])
                     break
                     
-            data_reg = datetime.now().strftime("%d/%m/%Y")
-            total_b = len(criticos)
-            
-            # Atualiza se for no mesmo dia, ou adiciona novo registro
-            ja_existe = False
+            # 1. Faxina e Padronização de datas antigas
+            hist_dados_limpos = {}
             for item in hist_dados:
-                if item["data"] == data_reg:
-                    item["busca_ativa"] = total_b
-                    ja_existe = True
-                    break
+                data_str = item["data"]
+                if "-" in data_str: # Converte quem estiver com traço (Padrão americano antigo)
+                    try:
+                        data_str = datetime.strptime(data_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    except:
+                        pass
+                # O dicionário garante que se tiver duas datas iguais, ele guarda só o último valor
+                hist_dados_limpos[data_str] = item["busca_ativa"]
+                    
+            # 2. Registra o dia de hoje
+            data_hoje = datetime.now().strftime("%d/%m/%Y")
+            total_b = len(criticos)
+            hist_dados_limpos[data_hoje] = total_b
             
-            if not ja_existe:
-                hist_dados.append({"data": data_reg, "busca_ativa": total_b})
+            # 3. Reconstrói a lista certinha para salvar
+            hist_dados = [{"data": k, "busca_ativa": v} for k, v in hist_dados_limpos.items()]
                 
             dados_str = json.dumps(hist_dados)
             if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
@@ -226,16 +232,24 @@ if menu == "Diagnóstico Geral":
             plt.savefig("evolucao.png")
             plt.close(fig_evol)
 
-            # --- GERAÇÃO DO PDF ---
+            # --- GERAÇÃO DO PDF (AGORA COM O NOME DA ESCOLA EM DESTAQUE) ---
             pdf = FPDF()
             pdf.add_page()
-            pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "RELATORIO DE DIAGNOSTICO DE FREQUENCIA ESCOLAR", 0, 1, "C")
-            pdf.ln(5)
+            
+            # Cabeçalho Oficial
+            pdf.set_font("Arial", "B", 14)
+            pdf.cell(0, 8, "ESCOLA ESTADUAL DOUTOR AMERICO BRASILIENSE", 0, 1, "C")
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 8, "RELATORIO DE DIAGNOSTICO E BUSCA ATIVA", 0, 1, "C")
+            pdf.ln(2)
+            
             pdf.set_font("Arial", "", 10)
-            cabecalho = "Diretoria de Ensino: SANTO ANDRE\nCIE: 8266\nEndereco: PRACA QUARTO CENTENARIO, 7 - CENTRO\nMunicipio: SANTO ANDRE - SP\nTelefone: (11) 4432-2021\nE-mail: E008266A@EDUCACAO.SP.GOV.BR"
-            pdf.multi_cell(0, 6, cabecalho)
+            cabecalho = "CIE: 8266 | Diretoria de Ensino: SANTO ANDRE\nEndereco: PRACA QUARTO CENTENARIO, 7 - CENTRO - SANTO ANDRE - SP\nTelefone: (11) 4432-2021 | E-mail: E008266A@EDUCACAO.SP.GOV.BR"
+            pdf.multi_cell(0, 5, cabecalho)
             pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2)
             pdf.ln(5)
+            
+            # Dados Principais
             pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, f"Data do relatorio: {hoje}", 0, 1)
             pdf.set_font("Arial", "", 10); pdf.cell(0, 6, f"Total de alunos matriculados analisados: {len(escola)}", 0, 1)
             pdf.cell(0, 6, f"Total atual de alunos em risco (< 76%): {len(criticos)}", 0, 1)
@@ -533,4 +547,5 @@ elif menu == "Lembretes e Agenda":
         st.info("💡 Para registrar uma nova ação, copie o RA do estudante acima e cole na aba 'Prontuário do Aluno'.")
     else:
         st.success("🎉 Parabéns! Todos os alunos em acompanhamento receberam contato nos últimos 5 dias. Ninguém está esquecido!")
+
 
