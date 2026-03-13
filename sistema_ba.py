@@ -8,7 +8,7 @@ from fpdf import FPDF
 import re
 import io
 import urllib.parse
-import gspread # NOVA BIBLIOTECA DO GOOGLE
+import gspread # BIBLIOTECA DO GOOGLE
 
 st.set_page_config(page_title="Busca Ativa Escolar", layout="wide")
 
@@ -142,6 +142,9 @@ if menu == "Diagnóstico Geral":
                     st.session_state.ra_selecionado = row["RA"]
                     st.success("Aluno selecionado! Acesse a aba 'Prontuário do Aluno' no menu ao lado.")
 
+        # ------------------------------------------------
+        # EXCEL NOMINAL BONITO E EM PERCENTUAL (%)
+        # ------------------------------------------------
         st.markdown("---")
         st.subheader("📥 Exportação de Dados")
         
@@ -153,17 +156,28 @@ if menu == "Diagnóstico Geral":
             workbook = writer.book
             worksheet = writer.sheets['Busca Ativa']
             worksheet.hide_gridlines(2)
+            
+            # Formatos
             formato_cabecalho = workbook.add_format({'bold': True, 'font_color': 'white', 'bg_color': '#1E3A8A', 'border': 1, 'align': 'center', 'valign': 'vcenter'})
             formato_celula = workbook.add_format({'border': 1, 'valign': 'vcenter'})
+            formato_perc = workbook.add_format({'border': 1, 'valign': 'vcenter', 'num_format': '0.00%'}) # Formato % adicionado aqui
+            
             for col_num, value in enumerate(df_excel.columns.values):
                 worksheet.write(0, col_num, value, formato_cabecalho)
                 if value == "Nome": worksheet.set_column(col_num, col_num, 40, formato_celula)
                 elif value == "Turma": worksheet.set_column(col_num, col_num, 30, formato_celula)
+                elif value == "Presenca_Anual": worksheet.set_column(col_num, col_num, 18, formato_perc) # Aplica % na coluna
                 else: worksheet.set_column(col_num, col_num, 15, formato_celula)
 
         excel_data = output.getvalue()
-        st.download_button("📄 Baixar Planilha Nominal (Excel Formatado)", data=excel_data, file_name=f"Lista_Busca_Ativa_{datetime.now().strftime('%d-%m-%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        st.download_button("📄 Baixar Planilha Nominal (Excel %)", data=excel_data, file_name=f"Lista_Busca_Ativa_{datetime.now().strftime('%d-%m-%Y')}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         st.markdown("---")
+
+        # ------------------------------------------------
+        # RELATÓRIO PDF SEDUC OFICIAL (EVOLUÇÃO QUALI E QUANTI)
+        # ------------------------------------------------
+        st.subheader("📊 Relatório Oficial SEDUC")
+        analise_qualitativa = st.text_area("Análise Qualitativa do Período (Opcional):", placeholder="Descreva os principais motivos de falta observados, ações que deram certo, evolução de contato com as famílias...")
 
         if st.button("Gerar Relatório PDF SEDUC"):
             hoje = datetime.now().strftime("%d/%m/%Y")
@@ -180,25 +194,39 @@ if menu == "Diagnóstico Geral":
                     if len(linha) > 1: hist_dados = json.loads(linha[1])
                     break
                     
-            data_reg = datetime.now().strftime("%Y-%m-%d")
+            data_reg = datetime.now().strftime("%d/%m/%Y")
             total_b = len(criticos)
             
-            ja_existe = any(item["data"] == data_reg for item in hist_dados)
+            # Atualiza se for no mesmo dia, ou adiciona novo registro
+            ja_existe = False
+            for item in hist_dados:
+                if item["data"] == data_reg:
+                    item["busca_ativa"] = total_b
+                    ja_existe = True
+                    break
+            
             if not ja_existe:
                 hist_dados.append({"data": data_reg, "busca_ativa": total_b})
-                dados_str = json.dumps(hist_dados)
-                if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-                else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
+                
+            dados_str = json.dumps(hist_dados)
+            if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
+            else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
 
+            # Gráfico de Evolução Quantitativa
             hist_df = pd.DataFrame(hist_dados)
             fig_evol, ax_evol = plt.subplots(figsize=(8, 4))
-            ax_evol.plot(hist_df["data"], hist_df["busca_ativa"], marker="o", color="red", linewidth=2)
-            ax_evol.set_title("Evolucao Quinzenal de Casos Criticos")
+            ax_evol.plot(hist_df["data"], hist_df["busca_ativa"], marker="o", color="#EF4444", linewidth=2.5)
+            ax_evol.set_title("Evolucao Historica de Casos Criticos", fontweight="bold")
+            ax_evol.set_ylabel("Qtd de Alunos")
+            ax_evol.spines['top'].set_visible(False)
+            ax_evol.spines['right'].set_visible(False)
+            ax_evol.yaxis.grid(True, linestyle='--', alpha=0.4)
             plt.xticks(rotation=45)
             plt.tight_layout()
             plt.savefig("evolucao.png")
             plt.close(fig_evol)
 
+            # --- GERAÇÃO DO PDF ---
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Arial", "B", 14); pdf.cell(0, 10, "RELATORIO DE DIAGNOSTICO DE FREQUENCIA ESCOLAR", 0, 1, "C")
@@ -210,29 +238,48 @@ if menu == "Diagnóstico Geral":
             pdf.ln(5)
             pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, f"Data do relatorio: {hoje}", 0, 1)
             pdf.set_font("Arial", "", 10); pdf.cell(0, 6, f"Total de alunos matriculados analisados: {len(escola)}", 0, 1)
-            pdf.cell(0, 6, f"Total de alunos em zona de risco (< 76%): {len(criticos)}", 0, 1)
-            pdf.ln(8); pdf.set_font("Arial", "B", 11); pdf.cell(0, 8, "Distribuicao por Turma", 0, 1)
+            pdf.cell(0, 6, f"Total atual de alunos em risco (< 76%): {len(criticos)}", 0, 1)
+            pdf.ln(5)
+
+            # Tabela de Turmas
+            pdf.set_font("Arial", "B", 11); pdf.cell(0, 8, "Distribuicao por Turma (Cenario Atual)", 0, 1)
             pdf.set_font("Arial", "B", 10); pdf.cell(140, 8, "Turma", 1); pdf.cell(40, 8, "Qtd", 1, 1)
             pdf.set_font("Arial", "", 10)
             for t, q in resumo.items():
                 pdf.cell(140, 8, str(t), 1); pdf.cell(40, 8, str(q), 1, 1)
 
+            # Nova página para Evolução e Qualitativo
             pdf.add_page()
-            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Acompanhamento e Grafico de Evolucao", 0, 1, "C")
+            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Acompanhamento e Evolucao Quantitativa", 0, 1, "C")
             pdf.ln(5); pdf.image("evolucao.png", x=15, y=25, w=170)
+            
+            # Espaço para colocar a tabela do histórico abaixo da imagem
+            pdf.set_y(120) 
+            pdf.set_font("Arial", "B", 10)
+            pdf.cell(90, 8, "Data de Referencia", 1, 0, "C"); pdf.cell(90, 8, "Alunos na Busca Ativa", 1, 1, "C")
+            pdf.set_font("Arial", "", 10)
+            
+            # Mostra as ultimas 10 datas no histórico da tabela para não estourar a página
+            for item in hist_dados[-10:]:
+                pdf.cell(90, 8, item["data"], 1, 0, "C")
+                pdf.cell(90, 8, str(item["busca_ativa"]), 1, 1, "C")
 
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Analise Diagnostica e Medidas Preventivas", 0, 1)
+            pdf.ln(10)
+            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Analise Qualitativa e Medidas Preventivas", 0, 1)
             pdf.set_font("Arial", "", 11)
-            texto_analise = f"A analise dos registros do BI indica que {len(criticos)} estudantes apresentam frequencia inferior a 76%. Esse indicador representa risco eminente de evasao e retencao, sendo objeto de monitoramento sistematico pela equipe gestora da unidade. As estrategias de contencao envolvem o acionamento do protocolo de Busca Ativa SEDUC, com contato aos responsaveis, averiguacao de vulnerabilidades e, esgotadas as vias escolares, acionamento da rede de protecao (Conselho Tutelar)."
-            pdf.multi_cell(0, 7, texto_analise)
+            
+            # Usa o texto digitado por você, ou um padrão se deixar em branco
+            if analise_qualitativa.strip():
+                texto_analise = analise_qualitativa
+            else:
+                texto_analise = f"A analise indica que {len(criticos)} estudantes apresentam risco de evasao. A escola segue o protocolo da SEDUC contatando responsaveis e esgotando as vias escolares."
+                
+            pdf.multi_cell(0, 7, texto_analise.encode('latin-1', 'replace').decode('latin-1')) # Proteção contra caracteres especiais no PDF
             
             pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
-            st.download_button("Baixar Relatório Oficial", data=pdf_out, file_name=f"Relatorio_SEDUC_{hoje.replace('/','-')}.pdf")
+            st.download_button("Baixar Relatório Oficial com Evolução", data=pdf_out, file_name=f"Relatorio_SEDUC_{hoje.replace('/','-')}.pdf")
             if os.path.exists("evolucao.png"): os.remove("evolucao.png")
-                # ============================================================
-# MOMENTO 2 — PRONTUÁRIO INDIVIDUAL (NUVEM)
-# ============================================================
+                
 elif menu == "Prontuário do Aluno":
     st.header("Prontuário Individual de Acompanhamento")
     
@@ -486,3 +533,4 @@ elif menu == "Lembretes e Agenda":
         st.info("💡 Para registrar uma nova ação, copie o RA do estudante acima e cole na aba 'Prontuário do Aluno'.")
     else:
         st.success("🎉 Parabéns! Todos os alunos em acompanhamento receberam contato nos últimos 5 dias. Ninguém está esquecido!")
+
