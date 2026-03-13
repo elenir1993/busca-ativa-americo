@@ -222,8 +222,8 @@ if menu == "Diagnóstico Geral":
             hist_df = pd.DataFrame(hist_dados)
             fig_evol, ax_evol = plt.subplots(figsize=(8, 4))
             ax_evol.plot(hist_df["data"], hist_df["busca_ativa"], marker="o", color="#EF4444", linewidth=2.5)
-            ax_evol.set_title("Evolucao Historica de Casos Criticos", fontweight="bold")
-            ax_evol.set_ylabel("Qtd de Alunos")
+            ax_evol.set_title("Evoluçãoo Historica de Casos Críticos", fontweight="bold")
+            ax_evol.set_ylabel("Quantidade de Alunos")
             ax_evol.spines['top'].set_visible(False)
             ax_evol.spines['right'].set_visible(False)
             ax_evol.yaxis.grid(True, linestyle='--', alpha=0.4)
@@ -547,5 +547,6 @@ elif menu == "Lembretes e Agenda":
         st.info("💡 Para registrar uma nova ação, copie o RA do estudante acima e cole na aba 'Prontuário do Aluno'.")
     else:
         st.success("🎉 Parabéns! Todos os alunos em acompanhamento receberam contato nos últimos 5 dias. Ninguém está esquecido!")
+
 
 
