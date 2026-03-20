@@ -45,7 +45,7 @@ st.subheader("EE Dr. Américo Brasiliense")
 
 menu = st.sidebar.radio(
     "Menu",
-    ["Diagnóstico Geral", "Prontuário do Aluno", "Lembretes e Agenda"]
+    ["Diagnóstico Geral", "Prontuário do Aluno", "Painel de Lembretes e Disparo"]
 )
 
 if st.sidebar.button("Deslogar / Reiniciar"):
@@ -99,11 +99,22 @@ if menu == "Diagnóstico Geral":
         escola = st.session_state.dados_escola
         criticos = st.session_state.criticos
 
-        col1, col2 = st.columns(2)
-        col1.metric("Total de alunos matriculados", len(escola))
-        col2.metric("Alunos em zona crítica (< 76%)", len(criticos))
+        # DIVISÃO EM FAIXAS DE 25% (QUARTIS)
+        f1 = escola[escola["Presenca_Anual"] <= 0.25]
+        f2 = escola[(escola["Presenca_Anual"] > 0.25) & (escola["Presenca_Anual"] <= 0.50)]
+        f3 = escola[(escola["Presenca_Anual"] > 0.50) & (escola["Presenca_Anual"] <= 0.75)]
+        f4 = escola[escola["Presenca_Anual"] > 0.75]
 
-        st.subheader("Concentração de Faltas por Turma")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.error(f"🔴 0% a 25%: {len(f1)} alunos")
+        col2.warning(f"🟠 26% a 50%: {len(f2)} alunos")
+        col3.info(f"🟡 51% a 75%: {len(f3)} alunos")
+        col4.success(f"🟢 76% a 100%: {len(f4)} alunos")
+        
+        st.write(f"**Total de alunos matriculados processados:** {len(escola)}")
+        st.markdown("---")
+
+        st.subheader("Concentração de Faltas por Turma (< 76%)")
         resumo = criticos["Turma"].value_counts()
         
         fig, ax = plt.subplots(figsize=(12, 6))
@@ -174,65 +185,68 @@ if menu == "Diagnóstico Geral":
         st.markdown("---")
 
         # ------------------------------------------------
-        # RELATÓRIO PDF SEDUC OFICIAL (EVOLUÇÃO QUALI E QUANTI)
+        # RELATÓRIO PDF SEDUC OFICIAL (EVOLUÇÃO QUALI E QUANTI FAIXAS)
         # ------------------------------------------------
         st.subheader("📊 Relatório Oficial SEDUC")
         analise_qualitativa = st.text_area("Análise Qualitativa do Período (Opcional):", placeholder="Descreva os principais motivos de falta observados, ações que deram certo, evolução de contato com as famílias...")
+
+        # LÓGICA DE HISTÓRICO NA NUVEM PARA AS 4 FAIXAS
+        todas_linhas = planilha.get_all_values()
+        linha_hist = -1
+        hist_dados = []
+        for i, linha in enumerate(todas_linhas):
+            if i > 0 and len(linha) > 0 and str(linha[0]) == "HISTORICO_SISTEMA":
+                linha_hist = i + 1
+                if len(linha) > 1: hist_dados = json.loads(linha[1])
+                break
 
         if st.button("Gerar Relatório PDF SEDUC"):
             hoje = datetime.now().strftime("%d/%m/%Y")
             resumo = criticos["Turma"].value_counts()
 
-            # LÓGICA DE HISTÓRICO NA NUVEM (COM LIMPEZA DE DATAS DUPLICADAS)
-            todas_linhas = planilha.get_all_values()
-            linha_hist = -1
-            hist_dados = []
-            
-            for i, linha in enumerate(todas_linhas):
-                if i > 0 and len(linha) > 0 and str(linha[0]) == "HISTORICO_SISTEMA":
-                    linha_hist = i + 1
-                    if len(linha) > 1: hist_dados = json.loads(linha[1])
-                    break
-                    
             # 1. Faxina e Padronização de datas antigas
             hist_dados_limpos = {}
             for item in hist_dados:
                 data_str = item["data"]
-                if "-" in data_str: # Converte quem estiver com traço (Padrão americano antigo)
-                    try:
-                        data_str = datetime.strptime(data_str, "%Y-%m-%d").strftime("%d/%m/%Y")
-                    except:
-                        pass
-                # O dicionário garante que se tiver duas datas iguais, ele guarda só o último valor
-                hist_dados_limpos[data_str] = item["busca_ativa"]
+                if "-" in data_str: 
+                    try: data_str = datetime.strptime(data_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+                    except: pass
+                # Compatibilidade com versão antiga que só salvava "busca_ativa"
+                if "f1" in item:
+                    hist_dados_limpos[data_str] = {"f1": item["f1"], "f2": item["f2"], "f3": item["f3"], "f4": item["f4"]}
+                else:
+                    hist_dados_limpos[data_str] = {"f1": 0, "f2": 0, "f3": item.get("busca_ativa", 0), "f4": 0}
                     
             # 2. Registra o dia de hoje
             data_hoje = datetime.now().strftime("%d/%m/%Y")
-            total_b = len(criticos)
-            hist_dados_limpos[data_hoje] = total_b
+            hist_dados_limpos[data_hoje] = {"f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)}
             
             # 3. Reconstrói a lista certinha para salvar
-            hist_dados = [{"data": k, "busca_ativa": v} for k, v in hist_dados_limpos.items()]
+            hist_dados = [{"data": k, "f1": v["f1"], "f2": v["f2"], "f3": v["f3"], "f4": v["f4"]} for k, v in hist_dados_limpos.items()]
                 
             dados_str = json.dumps(hist_dados)
             if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
             else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
 
-            # Gráfico de Evolução Quantitativa
+            # Gráfico de Evolução Quantitativa (4 Linhas)
             hist_df = pd.DataFrame(hist_dados)
-            fig_evol, ax_evol = plt.subplots(figsize=(8, 4))
-            ax_evol.plot(hist_df["data"], hist_df["busca_ativa"], marker="o", color="#EF4444", linewidth=2.5)
-            ax_evol.set_title("Evoluçãoo Historica de Casos Críticos", fontweight="bold")
+            fig_evol, ax_evol = plt.subplots(figsize=(10, 5))
+            ax_evol.plot(hist_df["data"], hist_df["f1"], marker="o", color="darkred", linewidth=2.5, label="0-25%")
+            ax_evol.plot(hist_df["data"], hist_df["f2"], marker="o", color="red", linewidth=2.5, label="26-50%")
+            ax_evol.plot(hist_df["data"], hist_df["f3"], marker="o", color="orange", linewidth=2.5, label="51-75%")
+            ax_evol.plot(hist_df["data"], hist_df["f4"], marker="o", color="green", linewidth=2.5, label="76-100%")
+            ax_evol.set_title("Evolução Histórica por Faixas de Frequência", fontweight="bold")
             ax_evol.set_ylabel("Quantidade de Alunos")
             ax_evol.spines['top'].set_visible(False)
             ax_evol.spines['right'].set_visible(False)
             ax_evol.yaxis.grid(True, linestyle='--', alpha=0.4)
             plt.xticks(rotation=45)
+            ax_evol.legend(loc="upper left", bbox_to_anchor=(1, 1))
             plt.tight_layout()
             plt.savefig("evolucao.png")
             plt.close(fig_evol)
 
-            # --- GERAÇÃO DO PDF (AGORA COM O NOME DA ESCOLA EM DESTAQUE) ---
+            # --- GERAÇÃO DO PDF ---
             pdf = FPDF()
             pdf.add_page()
             
@@ -256,7 +270,7 @@ if menu == "Diagnóstico Geral":
             pdf.ln(5)
 
             # Tabela de Turmas
-            pdf.set_font("Arial", "B", 11); pdf.cell(0, 8, "Distribuicao por Turma (Cenario Atual)", 0, 1)
+            pdf.set_font("Arial", "B", 11); pdf.cell(0, 8, "Distribuicao por Turma (Cenario < 76%)", 0, 1)
             pdf.set_font("Arial", "B", 10); pdf.cell(140, 8, "Turma", 1); pdf.cell(40, 8, "Qtd", 1, 1)
             pdf.set_font("Arial", "", 10)
             for t, q in resumo.items():
@@ -265,35 +279,61 @@ if menu == "Diagnóstico Geral":
             # Nova página para Evolução e Qualitativo
             pdf.add_page()
             pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Acompanhamento e Evolucao Quantitativa", 0, 1, "C")
-            pdf.ln(5); pdf.image("evolucao.png", x=15, y=25, w=170)
+            pdf.ln(5); pdf.image("evolucao.png", x=10, y=25, w=190)
             
             # Espaço para colocar a tabela do histórico abaixo da imagem
-            pdf.set_y(120) 
-            pdf.set_font("Arial", "B", 10)
-            pdf.cell(90, 8, "Data de Referencia", 1, 0, "C"); pdf.cell(90, 8, "Alunos na Busca Ativa", 1, 1, "C")
-            pdf.set_font("Arial", "", 10)
+            pdf.set_y(130) 
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(40, 8, "Data", 1, 0, "C")
+            pdf.cell(35, 8, "0% a 25%", 1, 0, "C")
+            pdf.cell(35, 8, "26% a 50%", 1, 0, "C")
+            pdf.cell(35, 8, "51% a 75%", 1, 0, "C")
+            pdf.cell(35, 8, "76% a 100%", 1, 1, "C")
+            pdf.set_font("Arial", "", 9)
             
             # Mostra as ultimas 10 datas no histórico da tabela para não estourar a página
             for item in hist_dados[-10:]:
-                pdf.cell(90, 8, item["data"], 1, 0, "C")
-                pdf.cell(90, 8, str(item["busca_ativa"]), 1, 1, "C")
+                pdf.cell(40, 8, item["data"], 1, 0, "C")
+                pdf.cell(35, 8, str(item.get("f1", 0)), 1, 0, "C")
+                pdf.cell(35, 8, str(item.get("f2", 0)), 1, 0, "C")
+                pdf.cell(35, 8, str(item.get("f3", 0)), 1, 0, "C")
+                pdf.cell(35, 8, str(item.get("f4", 0)), 1, 1, "C")
 
             pdf.ln(10)
             pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, "Analise Qualitativa e Medidas Preventivas", 0, 1)
             pdf.set_font("Arial", "", 11)
             
-            # Usa o texto digitado por você, ou um padrão se deixar em branco
             if analise_qualitativa.strip():
                 texto_analise = analise_qualitativa
             else:
-                texto_analise = f"A analise indica que {len(criticos)} estudantes apresentam risco de evasao. A escola segue o protocolo da SEDUC contatando responsaveis e esgotando as vias escolares."
+                texto_analise = f"A analise aponta a distribuicao da frequencia nas 4 faixas da escola, comprovando a evolucao quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco."
                 
-            pdf.multi_cell(0, 7, texto_analise.encode('latin-1', 'replace').decode('latin-1')) # Proteção contra caracteres especiais no PDF
+            pdf.multi_cell(0, 7, texto_analise.encode('latin-1', 'replace').decode('latin-1')) 
             
             pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
             st.download_button("Baixar Relatório Oficial com Evolução", data=pdf_out, file_name=f"Relatorio_SEDUC_{hoje.replace('/','-')}.pdf")
             if os.path.exists("evolucao.png"): os.remove("evolucao.png")
+
+        # ------------------------------------------------
+        # BOTÃO PARA EXCLUIR REGISTROS DO GRÁFICO E TABELA
+        # ------------------------------------------------
+        st.markdown("---")
+        with st.expander("⚙️ Gerenciar Histórico de Dados (Gráfico e Tabela)"):
+            st.warning("Use esta opção caso tenha gerado um relatório numa data errada e queira remover essa data do gráfico. Isso NÃO afeta os alunos cadastrados.")
+            if hist_dados:
+                datas_disponiveis = [item["data"] for item in hist_dados]
+                data_excluir = st.selectbox("Selecione a data para remover do histórico:", datas_disponiveis)
+                if st.button("Excluir Data Selecionada"):
+                    hist_dados_novo = [item for item in hist_dados if item["data"] != data_excluir]
+                    planilha.update_cell(linha_hist, 2, json.dumps(hist_dados_novo))
+                    st.success(f"Os dados do dia {data_excluir} foram apagados com sucesso!")
+                    st.rerun()
+            else:
+                st.info("Nenhum dado histórico gravado ainda.")
                 
+# ============================================================
+# MOMENTO 2 — PRONTUÁRIO DO ALUNO
+# ============================================================
 elif menu == "Prontuário do Aluno":
     st.header("Prontuário Individual de Acompanhamento")
     
@@ -501,14 +541,14 @@ elif menu == "Prontuário do Aluno":
                 col_bpdf2.download_button("📥 Baixar Carta em PDF", data=out_carta, file_name=f"Carta_Convocacao_{ra}.pdf")
 
 # ============================================================
-# MOMENTO 3 — PAINEL DE LEMBRETES E PRIORIDADES (NUVEM)
+# MOMENTO 3 — PAINEL DE LEMBRETES E DISPARO
 # ============================================================
-elif menu == "Lembretes e Agenda":
-    st.header("🚨 Painel de Prioridades e Acompanhamento")
-    st.write("Abaixo estão listados os estudantes que estão na Busca Ativa e **não recebem nenhum contato ou intervenção há mais de 5 dias**. Priorize estes atendimentos!")
+elif menu == "Painel de Lembretes e Disparo":
+    st.header("🚨 Central de Ações e Disparos")
 
     lembretes = []
     todas_linhas = planilha.get_all_values()
+    alunos_ativos = []
     
     for i, linha in enumerate(todas_linhas):
         if i > 0 and len(linha) > 1:
@@ -519,7 +559,15 @@ elif menu == "Lembretes e Agenda":
             dados_aluno = json.loads(linha[1])
             
             if dados_aluno.get("cadastro", {}).get("status") == "Em acompanhamento":
+                
+                # Para aba de disparo:
+                tel_bruto = dados_aluno["cadastro"].get("telefone", "")
+                num_zap = ''.join(filter(str.isdigit, tel_bruto))
+                
+                # Para aba de lembretes:
+                dias_passados = 0
                 acoes = dados_aluno.get("acoes", [])
+                
                 if acoes:
                     primeira_acao_data = acoes[0]["data"][:10]
                     ultima_acao = acoes[-1]
@@ -538,15 +586,53 @@ elif menu == "Lembretes e Agenda":
                             })
                     except:
                         pass
+                
+                # Adiciona lista de ativos geral
+                alunos_ativos.append({
+                    "RA": ra_aluno,
+                    "Nome": dados_aluno["cadastro"]["nome"],
+                    "Turma": dados_aluno["cadastro"]["turma"],
+                    "Zap": num_zap,
+                    "Dias": dias_passados
+                })
 
-    if lembretes:
-        df_lembretes = pd.DataFrame(lembretes)
-        df_lembretes = df_lembretes.sort_values(by="Dias sem contato", ascending=False).reset_index(drop=True)
-        st.error(f"⚠️ Atenção! Você tem **{len(lembretes)}** casos parados precisando de intervenção urgente.")
-        st.dataframe(df_lembretes, use_container_width=True)
-        st.info("💡 Para registrar uma nova ação, copie o RA do estudante acima e cole na aba 'Prontuário do Aluno'.")
-    else:
-        st.success("🎉 Parabéns! Todos os alunos em acompanhamento receberam contato nos últimos 5 dias. Ninguém está esquecido!")
+    # Criação das duas Abas (Tabs)
+    tab1, tab2 = st.tabs(["📲 Disparo em Massa (WhatsApp)", "⚠️ Casos Parados"])
 
+    with tab1:
+        st.subheader("Disparo Rápido para Alunos em Acompanhamento")
+        st.write("Envie mensagens individuais com apenas um clique para todos os alunos monitorados. *O WhatsApp abrirá com o texto pronto.*")
+        
+        msg_padrao = st.text_area(
+            "Mensagem Padrão para Disparo:", 
+            value="⚠️ *Notificação Escolar - EE Dr. Américo Brasiliense*\n\nPrezado responsável, notamos a ausência recorrente do(a) estudante. Solicitamos o comparecimento urgente na escola ou o envio de atestado médico. A assiduidade escolar é obrigatória, evite o acionamento da rede de proteção (Conselho Tutelar)."
+        )
+        
+        if not alunos_ativos:
+            st.info("Nenhum aluno em acompanhamento na nuvem no momento.")
+        else:
+            st.write(f"**Total na lista de disparo:** {len(alunos_ativos)} alunos")
+            for al in alunos_ativos:
+                c1, c2, c3 = st.columns([3, 1, 1])
+                c1.write(f"**{al['Nome']}** ({al['Turma']})")
+                
+                if al['Zap']:
+                    c2.write(f"📱 {al['Zap']}")
+                    msg_url = urllib.parse.quote(msg_padrao)
+                    link = f"https://wa.me/55{al['Zap']}?text={msg_url}"
+                    c3.link_button("📤 Enviar Msg", link)
+                else:
+                    c2.write("❌ Sem número")
+                    c3.button("📤 Enviar Msg", disabled=True, key=f"d_{al['RA']}")
+                st.divider()
 
-
+    with tab2:
+        st.write("Abaixo estão listados os estudantes que estão na Busca Ativa e **não recebem nenhum contato ou intervenção há mais de 5 dias**. Priorize estes atendimentos!")
+        if lembretes:
+            df_lembretes = pd.DataFrame(lembretes)
+            df_lembretes = df_lembretes.sort_values(by="Dias sem contato", ascending=False).reset_index(drop=True)
+            st.error(f"⚠️ Atenção! Você tem **{len(lembretes)}** casos parados precisando de intervenção urgente.")
+            st.dataframe(df_lembretes, use_container_width=True)
+            st.info("💡 Para registrar uma nova ação, copie o RA do estudante acima e cole na aba 'Prontuário do Aluno'.")
+        else:
+            st.success("🎉 Parabéns! Todos os alunos em acompanhamento receberam contato nos últimos 5 dias. Ninguém está esquecido!")
