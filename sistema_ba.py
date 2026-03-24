@@ -67,7 +67,7 @@ if st.sidebar.button("Deslogar / Reiniciar"):
     st.session_state.clear(); st.rerun()
 
 # ============================================================
-# MOMENTO 1 — DIAGNÓSTICO GERAL E GRÁFICO DE TURMAS
+# MOMENTO 1 — DIAGNÓSTICO GERAL E GRÁFICOS
 # ============================================================
 if menu == "Diagnóstico Geral":
     st.header("Diagnóstico de Frequência Escolar (Evolutivo)")
@@ -177,7 +177,6 @@ if menu == "Diagnóstico Geral":
             if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
             else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
 
-            # GRAFICO EVOLUTIVO
             hist_df = pd.DataFrame(hist_dados_novo)
             fig_evol, ax_evol = plt.subplots(figsize=(10, 4))
             ax_evol.plot(hist_df["data"], hist_df["f1"], marker="o", color="darkred", linewidth=2.5, label="0-25%")
@@ -192,7 +191,6 @@ if menu == "Diagnóstico Geral":
             fig_evol.savefig("evolucao_pdf.png", bbox_inches="tight")
             plt.close(fig_evol)
 
-            # GERAÇÃO DO PDF (COM ORTOGRAFIA CORRETA)
             pdf = FPDF(); pdf.add_page()
             pdf.set_font("Arial", "B", 14); pdf.cell(0, 8, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
             pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("RELATÓRIO DE DIAGNÓSTICO E BUSCA ATIVA"), 0, 1, "C"); pdf.ln(2)
@@ -236,13 +234,29 @@ if menu == "Diagnóstico Geral":
             if os.path.exists("evolucao_pdf.png"): os.remove("evolucao_pdf.png")
 
         # ------------------------------------------------
-        # MÁQUINA DO TEMPO (INSERIR/EXCLUIR DATA)
+        # MÁQUINA DO TEMPO (INSERIR LENDO PLANILHAS/EXCLUIR)
         # ------------------------------------------------
         st.markdown("---")
-        with st.expander("⚙️ Gerenciar Histórico de Dados (Gráfico e Tabela)"):
-            st.warning("Aqui você pode excluir uma data errada ou **INSERIR** manualmente os dados de um dia que ficou vazio/corrompido (ex: dia 13/03/2026).")
-            tab_del, tab_add = st.tabs(["🗑️ Excluir Data", "➕ Inserir/Corrigir Data Manual"])
+        with st.expander("⚙️ Gerenciar Histórico de Dados (A Máquina do Tempo)"):
+            st.warning("Se precisar registrar uma data retroativa (ex: 13/03/2026), suba os arquivos daquele dia lá no topo, digite a data abaixo e clique em Salvar.")
             
+            tab_add, tab_del = st.tabs(["➕ Salvar Leitura na Nuvem", "🗑️ Excluir Data"])
+            
+            with tab_add:
+                with st.form("form_correcao"):
+                    dt_manual = st.text_input("Data do Registro (DD/MM/AAAA):", value=datetime.now().strftime("%d/%m/%Y"))
+                    if st.form_submit_button("Salvar Dados Processados com esta Data"):
+                        # Ele usa os valores lidos automaticamente das planilhas que subiu no topo
+                        hist_dados_limpos = [item for item in hist_dados if item["data"] != dt_manual]
+                        hist_dados_limpos.append({"data": dt_manual, "f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)})
+                        try: hist_dados_limpos.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
+                        except: pass
+                        dados_str = json.dumps(hist_dados_limpos)
+                        if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
+                        else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
+                        st.success(f"Os dados da planilha lida foram gravados no dia {dt_manual} com sucesso!")
+                        st.rerun()
+
             with tab_del:
                 if hist_dados:
                     datas_disp = [item["data"] for item in hist_dados]
@@ -253,27 +267,6 @@ if menu == "Diagnóstico Geral":
                         st.success(f"Os dados do dia {dt_excluir} foram apagados com sucesso!")
                         st.rerun()
                 else: st.info("Nenhum dado histórico gravado ainda.")
-                    
-            with tab_add:
-                with st.form("form_correcao"):
-                    st.write("Digite a data e a quantidade de alunos em cada faixa para salvar no histórico.")
-                    c_dt, c_f1, c_f2, c_f3, c_f4 = st.columns(5)
-                    dt_manual = c_dt.text_input("Data (DD/MM/AAAA):", value=datetime.now().strftime("%d/%m/%Y"))
-                    val_f1 = c_f1.number_input("Qtd 0-25%", min_value=0, value=0)
-                    val_f2 = c_f2.number_input("Qtd 26-50%", min_value=0, value=0)
-                    val_f3 = c_f3.number_input("Qtd 51-75%", min_value=0, value=0)
-                    val_f4 = c_f4.number_input("Qtd 76-100%", min_value=0, value=0)
-                    
-                    if st.form_submit_button("Salvar Registro Manual"):
-                        hist_dados_limpos = [item for item in hist_dados if item["data"] != dt_manual]
-                        hist_dados_limpos.append({"data": dt_manual, "f1": val_f1, "f2": val_f2, "f3": val_f3, "f4": val_f4})
-                        try: hist_dados_limpos.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
-                        except: pass
-                        dados_str = json.dumps(hist_dados_limpos)
-                        if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-                        else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
-                        st.success(f"Dados do dia {dt_manual} registrados com sucesso!")
-                        st.rerun()
 
         st.markdown("---")
         st.subheader("Selecionar Turma para Ação")
@@ -293,7 +286,7 @@ if menu == "Diagnóstico Geral":
                 if c2.button("Abrir prontuário", key=f"ficha_{row['RA']}"):
                     st.session_state.ra_selecionado = row["RA"]; st.success("Acesse a aba 'Prontuário do Aluno' no menu ao lado.")
                     # ============================================================
-# MOMENTO 2 — PRONTUÁRIO DO ALUNO
+# MOMENTO 2 — PRONTUÁRIO DO ALUNO E AÇÕES
 # ============================================================
 elif menu == "Prontuário do Aluno":
     st.header("Prontuário Individual de Acompanhamento")
@@ -422,7 +415,7 @@ elif menu == "Prontuário do Aluno":
         else:
             st.info(f"🔒 Este prontuário encontra-se FECHADO pelo motivo: {status_atual}.")
             # ------------------------------------------------
-        # PDFs DO PRONTUÁRIO INDIVIDUAL (ACENTOS CORRIGIDOS)
+        # PDFs DO PRONTUÁRIO INDIVIDUAL
         # ------------------------------------------------
         if dados["acoes"]:
             st.markdown("### Histórico de Intervenções e Relatos")
@@ -538,14 +531,3 @@ elif menu == "Painel de Lembretes e Disparo":
                     c3.link_button("📤 Enviar Msg", link)
                 else:
                     c2.write("❌ Sem número")
-                    c3.button("📤 Enviar Msg", disabled=True, key=f"d_{al['RA']}")
-                st.divider()
-
-    with tab2:
-        st.write("Abaixo estão listados os estudantes que não recebem nenhum contato ou intervenção há mais de 5 dias.")
-        if lembretes:
-            df_lembretes = pd.DataFrame(lembretes).sort_values(by="Dias sem contato", ascending=False).reset_index(drop=True)
-            st.error(f"⚠️ Atenção! Você tem **{len(lembretes)}** casos parados precisando de intervenção urgente.")
-            st.dataframe(df_lembretes, use_container_width=True)
-        else:
-            st.success("🎉 Todos os alunos estão sendo acompanhados regularmente!")
