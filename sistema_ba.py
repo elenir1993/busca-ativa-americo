@@ -557,7 +557,7 @@ if menu == "Diagnóstico Geral":
                 for k, v in acoes_totais.items():
                     if v > 0:
                         pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
-                        pdf.ln(5)
+                                        pdf.ln(5)
                 pdf.set_font("Arial", "B", 12)
                 pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
                 pdf.set_font("Arial", "", 11)
@@ -837,7 +837,7 @@ elif menu == "Prontuário do Aluno":
                 pdf_al.set_font("Arial", "", 11); pdf_al.multi_cell(0, 6, txt(f"Endereço: {dados['cadastro'].get('endereco', 'Não informado')}")); pdf_al.ln(2)
                 pdf_al.set_font("Arial", "B", 11); pdf_al.cell(0, 8, txt(f"Situação Final: {status_atual.upper()}"), 0, 1)
                 pdf_al.line(10, pdf_al.get_y(), 200, pdf_al.get_y()); pdf_al.ln(5)
-                if os.path.exists(f"grafico_freq_{ra}.png"):
+                                if os.path.exists(f"grafico_freq_{ra}.png"):
                     pdf_al.cell(0, 8, txt("Evolução da Frequência do Aluno:"), 0, 1)
                     pdf_al.image(f"grafico_freq_{ra}.png", x=10, w=190); pdf_al.ln(5)
                     os.remove(f"grafico_freq_{ra}.png")
@@ -856,6 +856,7 @@ elif menu == "Prontuário do Aluno":
                 pdf_carta.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C"); pdf_carta.ln(10)
                 pdf_carta.set_font("Arial", "B", 16); pdf_carta.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C"); pdf_carta.ln(10)
                 pdf_carta.set_font("Arial", "", 12)
+                nome_resp = dados["cadastro"].get("responsavel", "").strip() or "Responsável legal"
                 texto_carta = (
                     f"Prezado(a) Senhor(a) {nome_resp},\n\n"
                     f"A Direção da Escola Estadual Doutor Américo Brasiliense, no uso de suas atribuições legais e em estrito cumprimento à Resolução SEDUC nº 39/2023, convoca Vossa Senhoria a comparecer a esta unidade escolar com MÁXIMA URGÊNCIA.\n\n"
@@ -1027,16 +1028,22 @@ elif menu == "Painel de Lembretes e Disparo":
                         pdf_massa.set_font("Arial", "B", 14); pdf_massa.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
                         pdf_massa.set_font("Arial", "B", 12); pdf_massa.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C")
                         pdf_massa.ln(8); pdf_massa.set_font("Arial", "", 12)
+                        nome_resp = (al.get("Responsavel") or "").strip() or "Responsável legal"
+                        freq_aluno = "não informada"
+                        if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
+                            linha_freq = st.session_state.dados_escola[st.session_state.dados_escola["RA"] == al["RA"]]
+                            if not linha_freq.empty and pd.notnull(linha_freq.iloc[0].get("Presenca_Anual")):
+                                freq_aluno = f"{float(linha_freq.iloc[0]['Presenca_Anual']) * 100:.1f}%"
                         texto_c = (
-                        f"Prezado(a) Senhor(a),\n\n"
-                        f"A Direção da Escola Estadual Doutor Américo Brasiliense, no uso de suas atribuições legais e em estrito cumprimento à Resolução SEDUC nº 39/2023, convoca Vossa Senhoria a comparecer a esta unidade escolar com MÁXIMA URGÊNCIA.\n\n"
-                        f"O motivo desta convocação é tratar das ausências sucessivas e da baixa frequência escolar do(a) estudante {dados['cadastro']['nome']}, matriculado(a) na turma {dados['cadastro']['turma']} (RA: {ra}), que atualmente encontra-se com a presença em {freq_str}.\n\n"
-                        f"Ressaltamos que a assiduidade escolar é um direito fundamental do estudante e um DEVER inalienável dos pais ou responsáveis, conforme prevê o Estatuto da Criança e do Adolescente (ECA - Lei nº 8.069/90) e a Lei de Diretrizes e Bases da Educação Nacional (LDB - Lei nº 9.394/96).\n\n"
-                        f"Solicitamos seu comparecimento presencial às terças ou quintas-feiras, no horário das 14:00 às 20:00. Ao chegar na unidade, por favor, procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor) para atendimento.\n\n"
-                        f"Alertamos que o não comparecimento ou a ausência de justificativa legal (como atestado médico) caracterizará omissão. Neste caso, a escola será obrigada a dar andamento ao protocolo oficial, encaminhando o caso imediatamente ao CONSELHO TUTELAR para as providências cabíveis de proteção ao menor.\n\n"
-                        f"Certos de sua compreensão e colaboração para garantirmos o direito à educação do(a) estudante.\n\n"
-                        f"Santo André, {datetime.now().strftime('%d/%m/%Y')}."
-                         )
+                            f"Prezado(a) Senhor(a) {nome_resp},\n\n"
+                            f"A Direção da Escola Estadual Doutor Américo Brasiliense, no uso de suas atribuições legais e em estrito cumprimento à Resolução SEDUC nº 39/2023, convoca Vossa Senhoria a comparecer a esta unidade escolar com MÁXIMA URGÊNCIA.\n\n"
+                            f"O motivo desta convocação é tratar das ausências sucessivas e da baixa frequência escolar do(a) estudante {al['Nome']}, matriculado(a) na turma {al['Turma']} (RA: {al['RA']}), que atualmente encontra-se com a presença em {freq_aluno}.\n\n"
+                            f"Ressaltamos que a assiduidade escolar é um direito fundamental do estudante e um DEVER inalienável dos pais ou responsáveis, conforme prevê o Estatuto da Criança e do Adolescente (ECA - Lei nº 8.069/90) e a Lei de Diretrizes e Bases da Educação Nacional (LDB - Lei nº 9.394/96).\n\n"
+                            f"Solicitamos seu comparecimento presencial às terças ou quintas-feiras, no horário das 14:00 às 20:00. Ao chegar na unidade, por favor, procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor) para atendimento.\n\n"
+                            f"Alertamos que o não comparecimento ou a ausência de justificativa legal (como atestado médico) caracterizará omissão. Neste caso, a escola será obrigada a dar andamento ao protocolo oficial, encaminhando o caso imediatamente ao CONSELHO TUTELAR para as providências cabíveis de proteção ao menor.\n\n"
+                            f"Certos de sua compreensão e colaboração para garantirmos o direito à educação do(a) estudante.\n\n"
+                            f"Santo André, {datetime.now().strftime('%d/%m/%Y')}."
+                        )
                         pdf_massa.multi_cell(0, 8, txt(texto_c))
                     st.download_button(
                         "📥 Baixar Cartas em Massa (PDF)",
@@ -1110,3 +1117,4 @@ elif menu == "Painel de Lembretes e Disparo":
                         nivel="INFO",
                     )
                     st.success("Lembrete registrado no log da nuvem.")
+            
