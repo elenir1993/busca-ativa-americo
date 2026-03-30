@@ -107,6 +107,7 @@ CHAVE_HISTORICO = "HISTORICO_SISTEMA"
 CHAVE_META_BASE = "CURRENT_DATA_META"
 PREFIXO_BASE = "CURRENT_DATA::"
 CHAVE_LOGS = "LOG_SISTEMA"
+PREFIXO_OCORRENCIA = "OCORRENCIA::"
 
 
 def semana_iso_atual():
@@ -300,6 +301,36 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
         except Exception as e:
             registrar_log("AUTO_FREQ_ERRO", f"Falha ao atualizar frequências em lote: {str(e)}", nivel="ERRO")
 
+
+def salvar_ocorrencia_nuvem(ocorrencia):
+    try:
+        ocorrencia_id = ocorrencia.get("id") or uuid.uuid4().hex[:12]
+        planilha.append_row(
+            [f"{PREFIXO_OCORRENCIA}{ocorrencia_id}", json.dumps(ocorrencia, ensure_ascii=False)],
+            value_input_option="RAW",
+        )
+        registrar_log("OCORRENCIA_REGISTRADA", f"RA {ocorrencia.get('ra')} | Tipo {ocorrencia.get('tipo')}", nivel="INFO")
+        return True
+    except Exception as e:
+        registrar_log("OCORRENCIA_ERRO", str(e), nivel="ERRO")
+        return False
+
+
+def carregar_ocorrencias_nuvem():
+    todas_linhas = planilha.get_all_values()
+    ocorrencias = []
+    for i, linha in enumerate(todas_linhas):
+        if i <= 0 or len(linha) < 2:
+            continue
+        chave = str(linha[0])
+        if not chave.startswith(PREFIXO_OCORRENCIA):
+            continue
+        item = carregar_json_seguro(linha[1], "ocorrencia")
+        if item:
+            ocorrencias.append(item)
+    ocorrencias.sort(key=lambda x: x.get("data_hora", ""), reverse=True)
+    return ocorrencias
+
 # ============================================================
 # SESSION STATE E MENU
 # ============================================================
@@ -311,7 +342,7 @@ if "auto_freq_data_execucao" not in st.session_state: st.session_state.auto_freq
 st.title("Sistema de Busca Ativa")
 st.subheader("EE Dr. Américo Brasiliense")
 
-menu = st.sidebar.radio("Menu", ["Diagnóstico Geral", "Prontuário do Aluno", "Painel de Lembretes e Disparo"])
+menu = st.sidebar.radio("Menu", ["Diagnóstico Geral", "Prontuário do Aluno", "Painel de Lembretes e Disparo", "Ocorrências Escolares"])
 
 if st.sidebar.button("Deslogar / Reiniciar"):
     st.session_state.clear(); st.rerun()
@@ -876,7 +907,120 @@ elif menu == "Prontuário do Aluno":
                 col_bpdf2.download_button("📥 Baixar Carta em PDF", data=pdf_carta.output(dest="S").encode("latin1", "ignore"), file_name=f"Carta_{ra}.pdf")
 
 # ============================================================
-# MOMENTO 3 — PAINEL DE LEMBRETES E DISPARO
+# MOMENTO 3 — OCORRÊNCIAS ESCOLARES
+# ============================================================
+elif menu == "Ocorrências Escolares":
+    st.header("📝 Registro de Ocorrências Escolares")
+    st.caption("Tela dedicada para professores e equipe registrarem ocorrências de forma rápida, integrada ao prontuário do aluno.")
+
+    if st.session_state.dados_escola is None:
+        base_nuvem, _ = carregar_base_nuvem()
+        if base_nuvem is not None:
+            st.session_state.dados_escola = base_nuvem
+
+    if st.session_state.dados_escola is None or st.session_state.dados_escola.empty:
+        st.warning("Carregue a base do BI no Diagnóstico Geral para habilitar o registro de ocorrências.")
+        st.stop()
+
+    base_alunos = st.session_state.dados_escola.copy()
+    base_alunos["RA"] = base_alunos["RA"].astype(str)
+    base_alunos["Turma"] = base_alunos["Turma"].fillna("Turma não identificada").astype(str)
+    base_alunos["Nome"] = base_alunos["Nome"].fillna("Sem nome").astype(str)
+    base_alunos = base_alunos.drop_duplicates(subset=["RA"], keep="last")
+
+    col_sel1, col_sel2 = st.columns(2)
+    turmas_disp = sorted(base_alunos["Turma"].unique().tolist())
+    turma_sel = col_sel1.selectbox("Turma", turmas_disp)
+    alunos_turma = base_alunos[base_alunos["Turma"] == turma_sel].sort_values("Nome")
+    opcoes_aluno = [f"{r['Nome']} | RA {r['RA']}" for _, r in alunos_turma.iterrows()]
+    aluno_sel = col_sel2.selectbox("Aluno", opcoes_aluno)
+    ra_sel = aluno_sel.split("| RA ")[1].strip() if aluno_sel else ""
+    aluno_ref = alunos_turma[alunos_turma["RA"] == ra_sel].iloc[0] if ra_sel else None
+
+    contato_resp = ""
+    telefone_resp = ""
+    email_resp = ""
+    if ra_sel:
+        for i, linha in enumerate(planilha.get_all_values()):
+            if i > 0 and len(linha) > 1 and str(linha[0]) == str(ra_sel):
+                dados_pront = carregar_json_seguro(linha[1], f"contato_ocorrencia_ra_{ra_sel}")
+                if dados_pront:
+                    cadastro = dados_pront.get("cadastro", {})
+                    contato_resp = cadastro.get("responsavel", "")
+                    telefone_resp = cadastro.get("telefone", "")
+                    email_resp = cadastro.get("email", "")
+                break
+
+    c_info1, c_info2, c_info3 = st.columns(3)
+    c_info1.info(f"Responsável: **{contato_resp or 'Não informado'}**")
+    c_info2.info(f"Telefone: **{telefone_resp or 'Não informado'}**")
+    c_info3.info(f"Frequência atual: **{(float(aluno_ref.get('Presenca_Anual', 0))*100):.1f}%**" if aluno_ref is not None and pd.notnull(aluno_ref.get("Presenca_Anual")) else "Frequência atual: **Não informada**")
+
+    with st.form("form_ocorrencia"):
+        st.subheader("Nova ocorrência")
+        col_o1, col_o2 = st.columns(2)
+        nome_professor = col_o1.text_input("Nome do professor", placeholder="Ex.: João da Silva")
+        tipo_ocorrencia = col_o2.selectbox(
+            "Tipo de ocorrência",
+            [
+                "Matar aula",
+                "Não entrega de atividades",
+                "Indisciplina",
+                "Atos de violência",
+                "Uso indevido de celular",
+                "Conflito entre alunos",
+                "Desrespeito a servidor",
+                "Saída sem autorização",
+                "Danos ao patrimônio",
+                "Outros",
+            ],
+        )
+        gravidade = st.selectbox("Gravidade", ["Leve", "Média", "Grave"])
+        descricao_ocorrido = st.text_area("Descrição do ocorrido", placeholder="Descreva de forma objetiva o que aconteceu.", height=140)
+
+        if st.form_submit_button("Registrar ocorrência"):
+            if not nome_professor.strip():
+                st.error("Informe o nome do professor.")
+            elif not descricao_ocorrido.strip():
+                st.error("Informe a descrição do ocorrido.")
+            elif not ra_sel:
+                st.error("Selecione um aluno.")
+            else:
+                payload = {
+                    "id": uuid.uuid4().hex[:12],
+                    "data_hora": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "ra": ra_sel,
+                    "nome": str(aluno_ref["Nome"]) if aluno_ref is not None else "",
+                    "turma": str(aluno_ref["Turma"]) if aluno_ref is not None else turma_sel,
+                    "frequencia_atual": float(aluno_ref["Presenca_Anual"]) if aluno_ref is not None and pd.notnull(aluno_ref["Presenca_Anual"]) else None,
+                    "responsavel": contato_resp,
+                    "telefone": telefone_resp,
+                    "email": email_resp,
+                    "professor": nome_professor.strip(),
+                    "tipo": tipo_ocorrencia,
+                    "gravidade": gravidade,
+                    "descricao": descricao_ocorrido.strip(),
+                    "status": "Aberta",
+                }
+                if salvar_ocorrencia_nuvem(payload):
+                    st.success("Ocorrência registrada com sucesso.")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível registrar a ocorrência. Tente novamente.")
+
+    st.markdown("---")
+    st.subheader("Últimas ocorrências registradas")
+    ocorrencias = carregar_ocorrencias_nuvem()
+    if not ocorrencias:
+        st.info("Nenhuma ocorrência registrada ainda.")
+    else:
+        df_oc = pd.DataFrame(ocorrencias)
+        colunas_view = ["data_hora", "turma", "nome", "ra", "tipo", "gravidade", "professor", "status", "descricao"]
+        colunas_view = [c for c in colunas_view if c in df_oc.columns]
+        st.dataframe(df_oc[colunas_view], use_container_width=True, hide_index=True)
+
+# ============================================================
+# MOMENTO 4 — PAINEL DE LEMBRETES E DISPARO
 # ============================================================
 elif menu == "Painel de Lembretes e Disparo":
     st.header("🚨 Central de Ações e Disparos")
