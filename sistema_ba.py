@@ -1,8 +1,9 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/sistema_ba.py b/sistema_ba.py
-index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d6b16689f 100644
+index c3fcb2c8a2a824939a13832078972b907a9fc7f1..2b79f88fb6d7c7caf5c5c4f6a3a59bc383d4f6dc 100644
 --- a/sistema_ba.py
 +++ b/sistema_ba.py
-@@ -1,203 +1,355 @@
+@@ -1,203 +1,376 @@
 -import streamlit as st
 -import pandas as pd
 -import os
@@ -107,6 +108,27 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d
 +    except Exception as e:
 +        registrar_log("JSON_INVALIDO", f"{contexto}: {str(e)}", nivel="ERRO")
 +        return None
++
++
++def classificar_prioridade(dias_sem_contato, frequencia=None):
++    score = dias_sem_contato
++    if frequencia is not None:
++        if frequencia <= 0.25:
++            score += 4
++        elif frequencia <= 0.50:
++            score += 3
++        elif frequencia <= 0.75:
++            score += 2
++        else:
++            score += 1
++
++    if score >= 10:
++        return "🔴 Crítica", score
++    if score >= 7:
++        return "🟠 Alta", score
++    if score >= 4:
++        return "🟡 Média", score
++    return "🟢 Baixa", score
 +
 +
 +def carregar_base_nuvem():
@@ -398,7 +420,7 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d
              pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, txt(f"Data da emissão: {datetime.now().strftime('%d/%m/%Y')}"), 0, 1); pdf.ln(5)
  
              pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
-@@ -230,116 +382,120 @@ if menu == "Diagnóstico Geral":
+@@ -230,116 +403,120 @@ if menu == "Diagnóstico Geral":
              pdf.multi_cell(0, 7, txt(texto)) 
              
              pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
@@ -532,7 +554,15 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d
  
          with st.expander("📞 Dados de Contato e Responsável", expanded=True):
              with st.form("form_dados_cadastrais"):
-@@ -449,85 +605,85 @@ elif menu == "Prontuário do Aluno":
+@@ -441,93 +618,177 @@ elif menu == "Prontuário do Aluno":
+                 
+                 pdf_al.set_font("Arial", "B", 12); pdf_al.cell(0, 8, txt("Histórico de Intervenções:"), 0, 1); pdf_al.ln(2)
+                 pdf_al.set_font("Arial", "", 10)
+                 for a in dados["acoes"]:
+                     pdf_al.set_font("Arial", "B", 10); pdf_al.cell(0, 7, txt(f"Data: {a['data']} | Ação: {a['acao']}"), 0, 1)
+                     pdf_al.set_font("Arial", "", 10); pdf_al.multi_cell(0, 6, txt(f"Relato: {a['relato']}")); pdf_al.ln(4)
+                 
+                 col_bpdf1.download_button("Baixar Resumo em PDF", data=pdf_al.output(dest="S").encode("latin1", "ignore"), file_name=f"Resumo_{ra}.pdf")
  
              if col_bpdf2.button("✉️ Gerar Carta de Convocação Física"):
                  pdf_carta = FPDF(); pdf_carta.add_page()
@@ -550,10 +580,18 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d
  # ============================================================
  # MOMENTO 3 — PAINEL DE LEMBRETES E DISPARO
  # ============================================================
- elif menu == "Painel de Lembretes e Disparo":
-     st.header("🚨 Central de Ações e Disparos")
- 
-     lembretes = []
+-elif menu == "Painel de Lembretes e Disparo":
+-    st.header("🚨 Central de Ações e Disparos")
+-
+-    lembretes = []
++elif menu == "Painel de Lembretes e Disparo":
++    st.header("🚨 Central de Ações e Disparos")
++    if st.session_state.dados_escola is None:
++        base_nuvem, _ = carregar_base_nuvem()
++        if base_nuvem is not None:
++            st.session_state.dados_escola = base_nuvem
++
++    lembretes = []
      todas_linhas = planilha.get_all_values()
      alunos_ativos = []
      
@@ -641,5 +679,90 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..9fd37924c87a6f287c8df323aa165d3d
                      c2.write(f"📱 {al['Zap']}")
                      link = f"https://wa.me/55{al['Zap']}?text={urllib.parse.quote(msg_padrao)}"
                      c3.link_button("📤 Enviar Msg", link)
-                 else:
-                     c2.write("❌ Sem número")
+-                else:
+-                    c2.write("❌ Sem número")
++                else:
++                    c2.write("❌ Sem número")
++
++    with tab2:
++        st.subheader("Casos com ação atrasada")
++        st.caption("Lista automática para priorização de acompanhamento (5 dias ou mais sem nova intervenção).")
++
++        if not lembretes:
++            st.success("Nenhum caso parado no momento 🎉")
++        else:
++            df_lemb = pd.DataFrame(lembretes)
++            if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
++                mapa_freq = (
++                    st.session_state.dados_escola[["RA", "Presenca_Anual"]]
++                    .dropna(subset=["RA"])
++                    .drop_duplicates(subset=["RA"], keep="last")
++                    .set_index("RA")["Presenca_Anual"]
++                    .to_dict()
++                )
++                df_lemb["Frequência BI"] = df_lemb["RA"].map(mapa_freq)
++            else:
++                df_lemb["Frequência BI"] = None
++
++            prioridades = df_lemb.apply(
++                lambda r: classificar_prioridade(
++                    int(r.get("Dias sem contato", 0)),
++                    r.get("Frequência BI") if pd.notnull(r.get("Frequência BI")) else None,
++                ),
++                axis=1,
++            )
++            df_lemb["Prioridade"] = [p[0] for p in prioridades]
++            df_lemb["Score"] = [p[1] for p in prioridades]
++            df_lemb = df_lemb.sort_values(by=["Score", "Dias sem contato"], ascending=False)
++
++            total_critica = len(df_lemb[df_lemb["Prioridade"].str.contains("Crítica")])
++            total_alta = len(df_lemb[df_lemb["Prioridade"].str.contains("Alta")])
++            total_media = len(df_lemb[df_lemb["Prioridade"].str.contains("Média")])
++            kc1, kc2, kc3 = st.columns(3)
++            kc1.error(f"Crítica: {total_critica}")
++            kc2.warning(f"Alta: {total_alta}")
++            kc3.info(f"Média: {total_media}")
++
++            st.dataframe(
++                df_lemb[
++                    [
++                        "Prioridade",
++                        "Nome",
++                        "RA",
++                        "Turma",
++                        "Dias sem contato",
++                        "Última Ação Realizada",
++                        "Primeiro Contato",
++                        "Frequência BI",
++                    ]
++                ],
++                use_container_width=True,
++                hide_index=True,
++            )
++
++            st.markdown("### Ações rápidas")
++            for _, caso in df_lemb.head(15).iterrows():
++                c1, c2, c3 = st.columns([4, 1, 1])
++                freq_txt = (
++                    f"{caso['Frequência BI']*100:.1f}%"
++                    if pd.notnull(caso.get("Frequência BI"))
++                    else "sem BI"
++                )
++                c1.write(
++                    f"{caso['Prioridade']} **{caso['Nome']}** | RA {caso['RA']} | "
++                    f"{caso['Dias sem contato']} dias sem contato | Frequência: {freq_txt}"
++                )
++                if c2.button("Abrir prontuário", key=f"abrir_pront_{caso['RA']}"):
++                    st.session_state.ra_selecionado = str(caso["RA"])
++                    st.session_state.menu_destino = "Prontuário do Aluno"
++                    st.success("RA selecionado! Vá para 'Prontuário do Aluno' no menu lateral.")
++                if c3.button("Registrar lembrete", key=f"log_lemb_{caso['RA']}"):
++                    registrar_log(
++                        "LEMBRETE_CASO_PARADO",
++                        f"RA {caso['RA']} | {caso['Dias sem contato']} dias sem contato",
++                        nivel="INFO",
++                    )
++                    st.success("Lembrete registrado no log da nuvem.")
+ 
+EOF
+)
