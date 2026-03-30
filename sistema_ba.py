@@ -856,7 +856,7 @@ elif menu == "Prontuário do Aluno":
                 pdf_carta.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C"); pdf_carta.ln(10)
                 pdf_carta.set_font("Arial", "B", 16); pdf_carta.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C"); pdf_carta.ln(10)
                 pdf_carta.set_font("Arial", "", 12)
-              texto_carta = (
+                texto_carta = (
                     f"Prezado(a) Senhor(a) {nome_resp},\n\n"
                     f"A Direção da Escola Estadual Doutor Américo Brasiliense, no uso de suas atribuições legais e em estrito cumprimento à Resolução SEDUC nº 39/2023, convoca Vossa Senhoria a comparecer a esta unidade escolar com MÁXIMA URGÊNCIA.\n\n"
                     f"O motivo desta convocação é tratar das ausências sucessivas e da baixa frequência escolar do(a) estudante {dados['cadastro']['nome']}, matriculado(a) na turma {dados['cadastro']['turma']} (RA: {ra}), que atualmente encontra-se com a presença em {freq_str}.\n\n"
@@ -1036,7 +1036,7 @@ elif menu == "Painel de Lembretes e Disparo":
                         f"Alertamos que o não comparecimento ou a ausência de justificativa legal (como atestado médico) caracterizará omissão. Neste caso, a escola será obrigada a dar andamento ao protocolo oficial, encaminhando o caso imediatamente ao CONSELHO TUTELAR para as providências cabíveis de proteção ao menor.\n\n"
                         f"Certos de sua compreensão e colaboração para garantirmos o direito à educação do(a) estudante.\n\n"
                         f"Santo André, {datetime.now().strftime('%d/%m/%Y')}."
-                                  )
+                         )
                         pdf_massa.multi_cell(0, 8, txt(texto_c))
                     st.download_button(
                         "📥 Baixar Cartas em Massa (PDF)",
