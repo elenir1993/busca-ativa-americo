@@ -651,7 +651,7 @@ elif menu == "Painel de Lembretes e Disparo":
         st.subheader("Disparo Rápido para Alunos em Acompanhamento")
         st.write("A mensagem abaixo já está formatada com as regras institucionais e o link da Sala do Futuro.")
         
-        texto_base = "⚠️ *Notificação Escolar - EE Dr. Amrico Brasiliense*\n\nPrezado(a) responsável,\n\nInformamos que a frequência escolar do(a) estudante encontra-se em nível crítico e em acompanhamento intensivo pela nossa equipe.\n\nCaso a frequência não aumente nos próximos 15 dias, o caso será encaminhado ao *Conselho Tutelar*.\n\nPedimos que acompanhe a frequência pela Sala do Futuro: https://saladofuturo.educacao.sp.gov.br/login-responsaveis \n\nPara sanar dúvidas ou justificar faltas, compareça à escola presencialmente às *terças ou quintas-feiras, das 14:00 às 20:00*, e procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor)."
+        texto_base = "⚠️ *Notificação Escolar - EE Dr. Américo Brasiliense*\n\nPrezado(a) responsável,\n\nInformamos que a frequência escolar do(a) estudante encontra-se em nível crítico e em acompanhamento intensivo pela nossa equipe.\n\nCaso a frequência não aumente nos próximos 15 dias, o caso será encaminhado ao *Conselho Tutelar*.\n\nPedimos que acompanhe a frequência pela Sala do Futuro: https://saladofuturo.educacao.sp.gov.br/login-responsaveis \n\nPara sanar dúvidas ou justificar faltas, compareça à escola presencialmente às *terças ou quintas-feiras, das 14:00 às 20:00*, e procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor)."
         
         msg_padrao = st.text_area("Mensagem Padrão para Disparo:", value=texto_base, height=250)
         
