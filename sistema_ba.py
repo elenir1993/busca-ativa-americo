@@ -214,7 +214,7 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
 
     hoje = datetime.now().strftime("%d/%m/%Y")
     atualizados = 0
-        for _, row in df_escola.iterrows():
+    for _, row in df_escola.iterrows():
         ra = str(row.get("RA", ""))
         freq = row.get("Presenca_Anual")
         if not ra or pd.isna(freq):
