@@ -278,7 +278,7 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
         if not dados:
             continue
         if dados.get("cadastro", {}).get("status") != "Em acompanhamento":
-                        continue
+            continue
         dados.setdefault("frequencia", [])
         ja_tem_hoje = False
         for item in dados["frequencia"]:
@@ -555,9 +555,10 @@ if menu == "Diagnóstico Geral":
                 pdf.cell(0, 8, txt("3. Funil de Ações Realizadas (Trabalho da Equipe)"), 0, 1)
                 pdf.set_font("Arial", "", 10)
                 for k, v in acoes_totais.items():
-                if v > 0:
-                    pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
-                    pdf.ln(5)
+                    if v > 0:
+                        pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
+
+                pdf.ln(5)
                 pdf.set_font("Arial", "B", 12)
                 pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
                 pdf.set_font("Arial", "", 11)
@@ -837,7 +838,8 @@ elif menu == "Prontuário do Aluno":
                 pdf_al.set_font("Arial", "", 11); pdf_al.multi_cell(0, 6, txt(f"Endereço: {dados['cadastro'].get('endereco', 'Não informado')}")); pdf_al.ln(2)
                 pdf_al.set_font("Arial", "B", 11); pdf_al.cell(0, 8, txt(f"Situação Final: {status_atual.upper()}"), 0, 1)
                 pdf_al.line(10, pdf_al.get_y(), 200, pdf_al.get_y()); pdf_al.ln(5)
-                                if os.path.exists(f"grafico_freq_{ra}.png"):
+
+                if os.path.exists(f"grafico_freq_{ra}.png"):
                     pdf_al.cell(0, 8, txt("Evolução da Frequência do Aluno:"), 0, 1)
                     pdf_al.image(f"grafico_freq_{ra}.png", x=10, w=190); pdf_al.ln(5)
                     os.remove(f"grafico_freq_{ra}.png")
@@ -1117,4 +1119,3 @@ elif menu == "Painel de Lembretes e Disparo":
                         nivel="INFO",
                     )
                     st.success("Lembrete registrado no log da nuvem.")
-            
