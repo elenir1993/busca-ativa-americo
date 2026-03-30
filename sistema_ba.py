@@ -837,7 +837,7 @@ elif menu == "Prontuário do Aluno":
                 pdf_al.set_font("Arial", "", 11); pdf_al.multi_cell(0, 6, txt(f"Endereço: {dados['cadastro'].get('endereco', 'Não informado')}")); pdf_al.ln(2)
                 pdf_al.set_font("Arial", "B", 11); pdf_al.cell(0, 8, txt(f"Situação Final: {status_atual.upper()}"), 0, 1)
                 pdf_al.line(10, pdf_al.get_y(), 200, pdf_al.get_y()); pdf_al.ln(5)
-                                if os.path.exists(f"grafico_freq_{ra}.png"):
+                    if os.path.exists(f"grafico_freq_{ra}.png"):
                     pdf_al.cell(0, 8, txt("Evolução da Frequência do Aluno:"), 0, 1)
                     pdf_al.image(f"grafico_freq_{ra}.png", x=10, w=190); pdf_al.ln(5)
                     os.remove(f"grafico_freq_{ra}.png")
