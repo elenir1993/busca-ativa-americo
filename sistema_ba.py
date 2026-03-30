@@ -213,7 +213,7 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
             mapa_linhas[str(linha[0])] = (i + 1, linha[1])
 
     hoje = datetime.now().strftime("%d/%m/%Y")
-    atualizados = 0
+    atualizacoes = []
     for _, row in df_escola.iterrows():
         ra = str(row.get("RA", ""))
         freq = row.get("Presenca_Anual")
@@ -237,11 +237,17 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
                 break
         if not ja_tem_hoje:
             dados["frequencia"].append({"data": hoje, "valor": float(freq)})
-        planilha.update_cell(linha_plan, 2, json.dumps(dados, ensure_ascii=False))
-        atualizados += 1
+        atualizacoes.append({"range": f"B{linha_plan}", "values": [[json.dumps(dados, ensure_ascii=False)]]})
 
-    if atualizados > 0:
-        registrar_log("AUTO_FREQ", f"Frequência automática gravada para {atualizados} alunos.", nivel="INFO")
+    if atualizacoes:
+        try:
+            tam_lote = 100
+            for i in range(0, len(atualizacoes), tam_lote):
+                lote = atualizacoes[i:i+tam_lote]
+                planilha.batch_update(lote, value_input_option="RAW")
+            registrar_log("AUTO_FREQ", f"Frequência automática gravada para {len(atualizacoes)} alunos.", nivel="INFO")
+        except Exception as e:
+            registrar_log("AUTO_FREQ_ERRO", f"Falha ao atualizar frequências em lote: {str(e)}", nivel="ERRO")
 
 # ============================================================
 # SESSION STATE E MENU
@@ -249,6 +255,7 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
 if "dados_escola" not in st.session_state: st.session_state.dados_escola = None
 if "turma_selecionada" not in st.session_state: st.session_state.turma_selecionada = None
 if "ra_selecionado" not in st.session_state: st.session_state.ra_selecionado = ""
+if "auto_freq_data_execucao" not in st.session_state: st.session_state.auto_freq_data_execucao = ""
 
 st.title("Sistema de Busca Ativa")
 st.subheader("EE Dr. Américo Brasiliense")
@@ -272,7 +279,10 @@ if menu == "Diagnóstico Geral":
 
     if st.session_state.dados_escola is None and base_nuvem is not None:
         st.session_state.dados_escola = base_nuvem
-        salvar_frequencia_automatica_para_acompanhamento(base_nuvem)
+        hoje = datetime.now().strftime("%d/%m/%Y")
+        if st.session_state.auto_freq_data_execucao != hoje:
+            salvar_frequencia_automatica_para_acompanhamento(base_nuvem)
+            st.session_state.auto_freq_data_execucao = hoje
 
     if meta_base and meta_base.get("uploaded_at"):
         st.caption(
@@ -301,6 +311,7 @@ if menu == "Diagnóstico Geral":
         st.session_state.dados_escola = escola
         meta_base = salvar_base_nuvem(escola)
         salvar_frequencia_automatica_para_acompanhamento(escola)
+        st.session_state.auto_freq_data_execucao = datetime.now().strftime("%d/%m/%Y")
         st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
 
     if st.session_state.dados_escola is not None:
@@ -328,64 +339,6 @@ if menu == "Diagnóstico Geral":
         
         st.markdown("---")
         st.subheader("Concentração de Faltas por Turma (< 76%)")
-        resumo = criticos_geral["Turma"].value_counts()
-        
-        fig_turmas, ax_turmas = plt.subplots(figsize=(12, 6))
-        bars = ax_turmas.bar(resumo.index, resumo.values, color="#3B82F6", edgecolor="#2563EB", linewidth=1.2, alpha=0.8)
-        ax_turmas.spines['top'].set_visible(False); ax_turmas.spines['right'].set_visible(False); ax_turmas.spines['left'].set_visible(False)
-        ax_turmas.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45, ha='right', fontsize=9, color="#374151")
-        ax_turmas.set_ylabel("Quantidade de Alunos", fontsize=10, fontweight='bold', color="#4B5563")
-        ax_turmas.bar_label(bars, padding=3, fontsize=10, fontweight='bold', color="#1E3A8A")
-        plt.tight_layout(); st.pyplot(fig_turmas)
-        fig_turmas.savefig("turmas.png", bbox_inches="tight")
-
-        # ------------------------------------------------
-        # DADOS NA NUVEM PARA RELATÓRIO E FUNIL DE AÇÕES
-        # ------------------------------------------------
-        todas_linhas = planilha.get_all_values()
-        linha_hist = -1; hist_dados = []
-        acoes_totais = {"WhatsApp": 0, "Contato Telefônico": 0, "Notificação Formal": 0, "Reunião Presencial": 0, "Visita Domiciliar": 0, "Acionamento Conselho Tutelar": 0, "Outros": 0}
-        acoes_por_turma = {}
-        acompanhamento_por_ra = {}
-
-        for i, linha in enumerate(todas_linhas):
-            if i > 0 and len(linha) > 0:
-                chave_linha = str(linha[0])
-                if chave_linha == CHAVE_HISTORICO:
-                    linha_hist = i + 1
-                    if len(linha) > 1:
-                        hist_dados = carregar_json_seguro(linha[1], "historico_sistema") or []
-                elif chave_linha == CHAVE_META_BASE or chave_linha.startswith(PREFIXO_BASE):
-                    continue
-                elif len(linha) > 1:
-                    dados_aluno = carregar_json_seguro(linha[1], "acoes_totais_prontuario")
-                    if dados_aluno:
-                        ra_ref = str(linha[0])
-                        cadastro = dados_aluno.get("cadastro", {})
-                        turma_ref = cadastro.get("turma", "Não informada")
-                        qtd_acoes = len(dados_aluno.get("acoes", []))
-                        acoes_por_turma[turma_ref] = acoes_por_turma.get(turma_ref, 0) + qtd_acoes
-                        acompanhamento_por_ra[ra_ref] = {
-                            "entrada": cadastro.get("data_entrada_acompanhamento", ""),
-                            "qtd_acoes": qtd_acoes,
-                        }
-                        for acao in dados_aluno.get("acoes", []):
-                            nome_acao = acao.get("acao", "").lower()
-                            if "whatsapp" in nome_acao: acoes_totais["WhatsApp"] += 1
-                            elif "telefônico" in nome_acao or "telefonico" in nome_acao: acoes_totais["Contato Telefônico"] += 1
-                            elif "notificação" in nome_acao or "notificacao" in nome_acao: acoes_totais["Notificação Formal"] += 1
-                            elif "reunião" in nome_acao or "reuniao" in nome_acao: acoes_totais["Reunião Presencial"] += 1
-                            elif "visita" in nome_acao: acoes_totais["Visita Domiciliar"] += 1
-                            elif "conselho" in nome_acao: acoes_totais["Acionamento Conselho Tutelar"] += 1
-                            else: acoes_totais["Outros"] += 1
-
-        st.markdown("---")
-        st.subheader("📊 Relatório Oficial SEDUC (Com Evolução e Funil)")
-        analise_qualitativa = st.text_area("Análise Qualitativa para o Relatório:", placeholder="Descreva os avanços observados e o trabalho da equipe...")
-
-        if st.button("📄 Gravar Hoje e Gerar Relatório PDF"):
-            hoje = datetime.now().strftime("%d/%m/%Y")
-            st.subheader("Concentração de Faltas por Turma (< 76%)")
         resumo = criticos_geral["Turma"].value_counts()
         
         fig_turmas, ax_turmas = plt.subplots(figsize=(12, 6))
@@ -1048,4 +1001,3 @@ elif menu == "Painel de Lembretes e Disparo":
                         nivel="INFO",
                     )
                     st.success("Lembrete registrado no log da nuvem.")
-            
