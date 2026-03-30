@@ -1026,7 +1026,8 @@ elif menu == "Painel de Lembretes e Disparo":
                         pdf_massa.set_font("Arial", "B", 14); pdf_massa.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
                         pdf_massa.set_font("Arial", "B", 12); pdf_massa.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C")
                         pdf_massa.ln(8); pdf_massa.set_font("Arial", "", 12)
-                        texto_c = (f"Prezado(a) Senhor(a),\n\n"
+                        texto_c = (
+                        f"Prezado(a) Senhor(a),\n\n"
                         f"A Direção da Escola Estadual Doutor Américo Brasiliense, no uso de suas atribuições legais e em estrito cumprimento à Resolução SEDUC nº 39/2023, convoca Vossa Senhoria a comparecer a esta unidade escolar com MÁXIMA URGÊNCIA.\n\n"
                         f"O motivo desta convocação é tratar das ausências sucessivas e da baixa frequência escolar do(a) estudante {dados['cadastro']['nome']}, matriculado(a) na turma {dados['cadastro']['turma']} (RA: {ra}), que atualmente encontra-se com a presença em {freq_str}.\n\n"
                         f"Ressaltamos que a assiduidade escolar é um direito fundamental do estudante e um DEVER inalienável dos pais ou responsáveis, conforme prevê o Estatuto da Criança e do Adolescente (ECA - Lei nº 8.069/90) e a Lei de Diretrizes e Bases da Educação Nacional (LDB - Lei nº 9.394/96).\n\n"
