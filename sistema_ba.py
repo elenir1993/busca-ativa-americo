@@ -40,6 +40,57 @@ def txt(texto):
     """Corrige problemas de acentuação no gerador de PDF"""
     return str(texto).encode('latin-1', 'replace').decode('latin-1')
 
+
+def normalizar_dataframe_bi(df, nome_arquivo):
+    """
+    Normaliza colunas vindas do BI e garante o mínimo para o diagnóstico.
+    Retorna (df_normalizado, erro_msg).
+    """
+    df = df.copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    mapa_colunas = {
+        "Aluno(a)": "Nome",
+        "Aluno": "Nome",
+        "Nome Aluno": "Nome",
+        "(%) Presença Anual na Turma Atual": "Presenca_Anual",
+        "(%) Presença Anual": "Presenca_Anual",
+        "Presença Anual": "Presenca_Anual",
+        "Presenca Anual": "Presenca_Anual",
+        "(%) Presença na Semana Atual": "Presenca_Semana",
+        "(%) Presença na Semana Anterior": "Presenca_Semana_Anterior",
+    }
+    df.rename(columns=mapa_colunas, inplace=True)
+
+    if "RA" not in df.columns:
+        return None, f"Arquivo '{nome_arquivo}' sem coluna RA."
+    if "Nome" not in df.columns:
+        return None, f"Arquivo '{nome_arquivo}' sem coluna Nome/Aluno(a)."
+    if "Presenca_Anual" not in df.columns:
+        return None, f"Arquivo '{nome_arquivo}' sem coluna de Presença Anual."
+
+    df["RA"] = (
+        df["RA"]
+        .astype(str)
+        .str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+    )
+    df["Nome"] = df["Nome"].astype(str).str.strip()
+
+    pres_str = (
+        df["Presenca_Anual"]
+        .astype(str)
+        .str.replace("%", "", regex=False)
+        .str.replace(",", ".", regex=False)
+        .str.strip()
+    )
+    df["Presenca_Anual"] = pd.to_numeric(pres_str, errors="coerce")
+    if df["Presenca_Anual"].dropna().gt(1).any():
+        df["Presenca_Anual"] = df["Presenca_Anual"] / 100.0
+
+    turma_limpa = re.sub(r'\s*-\s*\d{5,}.*$', '', nome_arquivo.replace(".xlsx", "")).strip()
+    df["Turma"] = turma_limpa if turma_limpa else "Turma não identificada"
+    return df, None
+
 # ============================================================
 # CONEXÃO COM A NUVEM (GOOGLE SHEETS)
 # ============================================================
@@ -227,7 +278,7 @@ def salvar_frequencia_automatica_para_acompanhamento(df_escola):
         if not dados:
             continue
         if dados.get("cadastro", {}).get("status") != "Em acompanhamento":
-            continue
+                        continue
         dados.setdefault("frequencia", [])
         ja_tem_hoje = False
         for item in dados["frequencia"]:
@@ -294,25 +345,36 @@ if menu == "Diagnóstico Geral":
 
     if arquivos:
         lista = []
+        erros_upload = []
         for arq in arquivos:
-            df = pd.read_excel(arq)
-            df.columns = [str(c).strip() for c in df.columns]
-            df.rename(columns={
-                "Aluno(a)": "Nome", "(%) Presença Anual na Turma Atual": "Presenca_Anual",
-                "(%) Presença na Semana Atual": "Presenca_Semana", "(%) Presença na Semana Anterior": "Presenca_Semana_Anterior"
-            }, inplace=True)
-            turma_limpa = re.sub(r'\s*-\s*\d{5,}.*$', '', arq.name.replace(".xlsx", "")).strip()
-            df["Turma"] = turma_limpa
-            if "RA" in df.columns: df["RA"] = df["RA"].astype(str).str.replace(r'\.0$', '', regex=True)
-            lista.append(df)
+            try:
+                df_raw = pd.read_excel(arq)
+                df_norm, erro = normalizar_dataframe_bi(df_raw, arq.name)
+                if erro:
+                    erros_upload.append(erro)
+                    continue
+                lista.append(df_norm)
+            except Exception as e:
+                erros_upload.append(f"Falha ao ler '{arq.name}': {str(e)}")
 
-        escola = pd.concat(lista, ignore_index=True)
-        escola["Presenca_Anual"] = pd.to_numeric(escola["Presenca_Anual"], errors="coerce")
-        st.session_state.dados_escola = escola
-        meta_base = salvar_base_nuvem(escola)
-        salvar_frequencia_automatica_para_acompanhamento(escola)
-        st.session_state.auto_freq_data_execucao = datetime.now().strftime("%d/%m/%Y")
-        st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
+        if erros_upload:
+            for erro in erros_upload:
+                st.error(erro)
+
+        if lista:
+            escola = pd.concat(lista, ignore_index=True)
+            escola = escola.dropna(subset=["RA", "Nome"], how="any")
+            escola = escola[escola["RA"].astype(str).str.strip() != ""]
+            escola["Turma"] = escola["Turma"].fillna("Turma não identificada").astype(str)
+            escola["Presenca_Anual"] = pd.to_numeric(escola["Presenca_Anual"], errors="coerce")
+            escola["Presenca_Anual"] = escola["Presenca_Anual"].clip(lower=0, upper=1)
+            st.session_state.dados_escola = escola
+            meta_base = salvar_base_nuvem(escola)
+            salvar_frequencia_automatica_para_acompanhamento(escola)
+            st.session_state.auto_freq_data_execucao = datetime.now().strftime("%d/%m/%Y")
+            st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
+        elif not erros_upload:
+            st.warning("Nenhum dado válido foi encontrado nas planilhas enviadas.")
 
     if st.session_state.dados_escola is not None:
         escola = st.session_state.dados_escola
@@ -339,16 +401,27 @@ if menu == "Diagnóstico Geral":
         
         st.markdown("---")
         st.subheader("Concentração de Faltas por Turma (< 76%)")
-        resumo = criticos_geral["Turma"].value_counts()
-        
-        fig_turmas, ax_turmas = plt.subplots(figsize=(12, 6))
-        bars = ax_turmas.bar(resumo.index, resumo.values, color="#3B82F6", edgecolor="#2563EB", linewidth=1.2, alpha=0.8)
-        ax_turmas.spines['top'].set_visible(False); ax_turmas.spines['right'].set_visible(False); ax_turmas.spines['left'].set_visible(False)
-        ax_turmas.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45, ha='right', fontsize=9, color="#374151")
-        ax_turmas.set_ylabel("Quantidade de Alunos", fontsize=10, fontweight='bold', color="#4B5563")
-        ax_turmas.bar_label(bars, padding=3, fontsize=10, fontweight='bold', color="#1E3A8A")
-        plt.tight_layout(); st.pyplot(fig_turmas)
-        fig_turmas.savefig("turmas.png", bbox_inches="tight")
+        resumo = (
+            criticos_geral["Turma"]
+            .fillna("Turma não identificada")
+            .astype(str)
+            .str.strip()
+            .replace("", "Turma não identificada")
+            .value_counts()
+        )
+
+        if resumo.empty:
+            st.info("Sem turmas críticas para exibir no momento.")
+        else:
+            fig_turmas, ax_turmas = plt.subplots(figsize=(12, 6))
+            bars = ax_turmas.bar(resumo.index, resumo.values, color="#3B82F6", edgecolor="#2563EB", linewidth=1.2, alpha=0.8)
+            ax_turmas.spines['top'].set_visible(False); ax_turmas.spines['right'].set_visible(False); ax_turmas.spines['left'].set_visible(False)
+            ax_turmas.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45, ha='right', fontsize=9, color="#374151")
+            ax_turmas.set_ylabel("Quantidade de Alunos", fontsize=10, fontweight='bold', color="#4B5563")
+            ax_turmas.bar_label(bars, padding=3, fontsize=10, fontweight='bold', color="#1E3A8A")
+            plt.tight_layout(); st.pyplot(fig_turmas)
+            fig_turmas.savefig("turmas.png", bbox_inches="tight")
+            plt.close(fig_turmas)
         # ------------------------------------------------
         # DADOS NA NUVEM PARA RELATÓRIO E FUNIL DE AÇÕES
         # ------------------------------------------------
@@ -394,201 +467,285 @@ if menu == "Diagnóstico Geral":
         analise_qualitativa = st.text_area("Análise Qualitativa para o Relatório:", placeholder="Descreva os avanços observados e o trabalho da equipe...")
 
         if st.button("📄 Gravar Hoje e Gerar Relatório PDF"):
-            hoje = datetime.now().strftime("%d/%m/%Y")
-            
-            hist_dados_limpos = {}
-            for item in hist_dados:
-                d_str = item["data"]
-                if "-" in d_str: 
-                    try: d_str = datetime.strptime(d_str, "%Y-%m-%d").strftime("%d/%m/%Y")
-                    except: pass
-                if "f1" in item: hist_dados_limpos[d_str] = {"f1": item["f1"], "f2": item["f2"], "f3": item["f3"], "f4": item["f4"]}
-                else: hist_dados_limpos[d_str] = {"f1": 0, "f2": 0, "f3": item.get("busca_ativa", 0), "f4": 0}
-                    
-            hist_dados_limpos[hoje] = {"f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)}
-            hist_dados_novo = [{"data": k, "f1": v["f1"], "f2": v["f2"], "f3": v["f3"], "f4": v["f4"]} for k, v in hist_dados_limpos.items()]
-            try: hist_dados_novo.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
-            except: pass
-                
-            dados_str = json.dumps(hist_dados_novo)
-            if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-            else: planilha.append_row([CHAVE_HISTORICO, dados_str])
+            try:
+                hoje = datetime.now().strftime("%d/%m/%Y")
 
-            hist_df = pd.DataFrame(hist_dados_novo)
-            fig_evol, ax_evol = plt.subplots(figsize=(10, 4))
-            ax_evol.plot(hist_df["data"], hist_df["f1"], marker="o", color="darkred", linewidth=2.5, label="0-25%")
-            ax_evol.plot(hist_df["data"], hist_df["f2"], marker="o", color="red", linewidth=2.5, label="26-50%")
-            ax_evol.plot(hist_df["data"], hist_df["f3"], marker="o", color="orange", linewidth=2.5, label="51-75%")
-            ax_evol.plot(hist_df["data"], hist_df["f4"], marker="o", color="green", linewidth=2.5, label="76-100%")
-            ax_evol.set_title("Evolução Histórica por Faixas de Frequência", fontweight="bold")
-            ax_evol.set_ylabel("Quantidade de Alunos")
-            ax_evol.spines['top'].set_visible(False); ax_evol.spines['right'].set_visible(False)
-            ax_evol.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45)
-            ax_evol.legend(loc="upper left", bbox_to_anchor=(1, 1))
-            fig_evol.savefig("evolucao_pdf.png", bbox_inches="tight")
-            plt.close(fig_evol)
+                hist_dados_limpos = {}
+                for item in hist_dados:
+                    if not isinstance(item, dict) or "data" not in item:
+                        continue
+                    d_str = item["data"]
+                    if "-" in d_str:
+                        try:
+                            d_str = datetime.strptime(d_str, "%Y-%m-%d").strftime("%d/%m/%Y")
+                        except Exception:
+                            pass
+                    if "f1" in item:
+                        hist_dados_limpos[d_str] = {"f1": item.get("f1", 0), "f2": item.get("f2", 0), "f3": item.get("f3", 0), "f4": item.get("f4", 0)}
+                    else:
+                        hist_dados_limpos[d_str] = {"f1": 0, "f2": 0, "f3": item.get("busca_ativa", 0), "f4": 0}
 
-            pdf = FPDF(); pdf.add_page()
-            pdf.set_font("Arial", "B", 14); pdf.cell(0, 8, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
-            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("RELATÓRIO DE DIAGNÓSTICO E BUSCA ATIVA"), 0, 1, "C"); pdf.ln(2)
-            pdf.set_font("Arial", "", 10)
-            cab = "CIE: 8266 | Diretoria de Ensino: SANTO ANDRÉ\nEndereço: PRAÇA QUARTO CENTENÁRIO, 7 - CENTRO - SANTO ANDRÉ - SP\nTelefone: (11) 4432-2021 | E-mail: E008266A@EDUCACAO.SP.GOV.BR"
-            pdf.multi_cell(0, 5, txt(cab)); pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2); pdf.ln(5)
-            
-            pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, txt(f"Data da emissão: {datetime.now().strftime('%d/%m/%Y')}"), 0, 1); pdf.ln(5)
+                hist_dados_limpos[hoje] = {"f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)}
+                hist_dados_novo = [{"data": k, "f1": v["f1"], "f2": v["f2"], "f3": v["f3"], "f4": v["f4"]} for k, v in hist_dados_limpos.items()]
+                try:
+                    hist_dados_novo.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
+                except Exception:
+                    pass
 
-            pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
-            pdf.set_font("Arial", "B", 10)
-            pdf.cell(110, 8, "Turma", 1)
-            pdf.cell(30, 8, "Qtd Alunos", 1, 0, "C")
-            pdf.cell(40, 8, "Ações da Turma", 1, 1, "C")
-            pdf.set_font("Arial", "", 10)
-            for t, q in resumo.items():
-                acoes_turma = acoes_por_turma.get(str(t), 0)
-                turma_txt = txt(str(t))[:32]
-                pdf.cell(110, 8, turma_txt, 1)
-                pdf.cell(30, 8, str(q), 1, 0, "C")
-                pdf.cell(40, 8, str(acoes_turma), 1, 1, "C")
-            
-            pdf.ln(5)
-            if os.path.exists("turmas.png"): pdf.image("turmas.png", x=10, w=190)
+                dados_str = json.dumps(hist_dados_novo)
+                if linha_hist != -1:
+                    planilha.update_cell(linha_hist, 2, dados_str)
+                else:
+                    planilha.append_row([CHAVE_HISTORICO, dados_str])
 
-            pdf.add_page()
-            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("2. Acompanhamento e Evolução Quantitativa"), 0, 1)
-            pdf.ln(2); pdf.image("evolucao_pdf.png", x=10, w=190)
-            
-            pdf.set_y(120); pdf.set_font("Arial", "B", 9)
-            pdf.cell(40, 8, "Data", 1, 0, "C"); pdf.cell(35, 8, "0% a 25%", 1, 0, "C"); pdf.cell(35, 8, "26% a 50%", 1, 0, "C"); pdf.cell(35, 8, "51% a 75%", 1, 0, "C"); pdf.cell(35, 8, "76% a 100%", 1, 1, "C")
-            pdf.set_font("Arial", "", 9)
-            for item in hist_dados_novo[-10:]:
-                pdf.cell(40, 8, item["data"], 1, 0, "C"); pdf.cell(35, 8, str(item.get("f1", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f2", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f3", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f4", 0)), 1, 1, "C")
+                hist_df = pd.DataFrame(hist_dados_novo)
+                fig_evol, ax_evol = plt.subplots(figsize=(10, 4))
+                ax_evol.plot(hist_df["data"], hist_df["f1"], marker="o", color="darkred", linewidth=2.5, label="0-25%")
+                ax_evol.plot(hist_df["data"], hist_df["f2"], marker="o", color="red", linewidth=2.5, label="26-50%")
+                ax_evol.plot(hist_df["data"], hist_df["f3"], marker="o", color="orange", linewidth=2.5, label="51-75%")
+                ax_evol.plot(hist_df["data"], hist_df["f4"], marker="o", color="green", linewidth=2.5, label="76-100%")
+                ax_evol.set_title("Evolução Histórica por Faixas de Frequência", fontweight="bold")
+                ax_evol.set_ylabel("Quantidade de Alunos")
+                ax_evol.spines['top'].set_visible(False); ax_evol.spines['right'].set_visible(False)
+                ax_evol.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45)
+                ax_evol.legend(loc="upper left", bbox_to_anchor=(1, 1))
+                fig_evol.savefig("evolucao_pdf.png", bbox_inches="tight")
+                plt.close(fig_evol)
 
-            pdf.ln(8)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 8, txt("3. Funil de Ações Realizadas (Trabalho da Equipe)"), 0, 1)
-            pdf.set_font("Arial", "", 10)
-            for k, v in acoes_totais.items():
-                if v > 0:
-                    pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
+                pdf = FPDF(); pdf.add_page()
+                pdf.set_font("Arial", "B", 14); pdf.cell(0, 8, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
+                pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("RELATÓRIO DE DIAGNÓSTICO E BUSCA ATIVA"), 0, 1, "C"); pdf.ln(2)
+                pdf.set_font("Arial", "", 10)
+                cab = "CIE: 8266 | Diretoria de Ensino: SANTO ANDRÉ\nEndereço: PRAÇA QUARTO CENTENÁRIO, 7 - CENTRO - SANTO ANDRÉ - SP\nTelefone: (11) 4432-2021 | E-mail: E008266A@EDUCACAO.SP.GOV.BR"
+                pdf.multi_cell(0, 5, txt(cab)); pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2); pdf.ln(5)
 
-            pdf.ln(5)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
-            pdf.set_font("Arial", "", 11)
-            texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
-            pdf.multi_cell(0, 7, txt(texto))
+                pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, txt(f"Data da emissão: {datetime.now().strftime('%d/%m/%Y')}"), 0, 1); pdf.ln(5)
 
-            anex_df = escola[escola["Presenca_Anual"] <= 0.50].copy().sort_values("Presenca_Anual", ascending=True)
-            if not anex_df.empty:
+                pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
+                pdf.set_font("Arial", "B", 10)
+                pdf.cell(110, 8, "Turma", 1)
+                pdf.cell(30, 8, "Qtd Alunos", 1, 0, "C")
+                pdf.cell(40, 8, "Ações da Turma", 1, 1, "C")
+                pdf.set_font("Arial", "", 10)
+                for t, q in resumo.items():
+                    acoes_turma = acoes_por_turma.get(str(t), 0)
+                    turma_txt = txt(str(t))[:32]
+                    pdf.cell(110, 8, turma_txt, 1)
+                    pdf.cell(30, 8, str(q), 1, 0, "C")
+                    pdf.cell(40, 8, str(acoes_turma), 1, 1, "C")
+
+                pdf.ln(5)
+                if os.path.exists("turmas.png"):
+                    pdf.image("turmas.png", x=10, w=190)
+
                 pdf.add_page()
-                pdf.set_font("Arial", "B", 12)
-                pdf.cell(0, 8, txt("ANEXO - Casos Críticos (Frequência <= 50%)"), 0, 1)
-                pdf.set_font("Arial", "B", 9)
-                pdf.cell(55, 7, "Nome", 1)
-                pdf.cell(30, 7, "RA", 1)
-                pdf.cell(45, 7, "Turma", 1)
-                pdf.cell(25, 7, "Frequência", 1, 0, "C")
-                pdf.cell(35, 7, "Ações", 1, 1, "C")
+                pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("2. Acompanhamento e Evolução Quantitativa"), 0, 1)
+                pdf.ln(2)
+                if os.path.exists("evolucao_pdf.png"):
+                    pdf.image("evolucao_pdf.png", x=10, w=190)
+
+                pdf.set_y(120); pdf.set_font("Arial", "B", 9)
+                pdf.cell(40, 8, "Data", 1, 0, "C"); pdf.cell(35, 8, "0% a 25%", 1, 0, "C"); pdf.cell(35, 8, "26% a 50%", 1, 0, "C"); pdf.cell(35, 8, "51% a 75%", 1, 0, "C"); pdf.cell(35, 8, "76% a 100%", 1, 1, "C")
                 pdf.set_font("Arial", "", 9)
-                for _, linha_al in anex_df.head(120).iterrows():
-                    ra_txt = str(linha_al.get("RA", ""))
-                    nome_txt = txt(str(linha_al.get("Nome", "")))[:28]
-                    turma_txt = txt(str(linha_al.get("Turma", "")))[:22]
-                    freq_txt = f"{float(linha_al.get('Presenca_Anual', 0))*100:.1f}%"
-                    qtd_acoes = acompanhamento_por_ra.get(ra_txt, {}).get("qtd_acoes", 0)
-                    pdf.cell(55, 7, nome_txt, 1)
-                    pdf.cell(30, 7, ra_txt[:14], 1)
-                    pdf.cell(45, 7, turma_txt, 1)
-                    pdf.cell(25, 7, freq_txt, 1, 0, "C")
-                    pdf.cell(35, 7, str(qtd_acoes), 1, 1, "C")
+                for item in hist_dados_novo[-10:]:
+                    pdf.cell(40, 8, item["data"], 1, 0, "C"); pdf.cell(35, 8, str(item.get("f1", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f2", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f3", 0)), 1, 0, "C"); pdf.cell(35, 8, str(item.get("f4", 0)), 1, 1, "C")
 
-            st.download_button("📥 Baixar Relatório em PDF", data=pdf.output(dest="S").encode("latin1", "ignore"), file_name=f"Relatorio_Busca_Ativa_{datetime.now().strftime('%d-%m-%Y')}.pdf")
-            st.success("Relatório gerado com sucesso!")
+                pdf.ln(8)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 8, txt("3. Funil de Ações Realizadas (Trabalho da Equipe)"), 0, 1)
+                pdf.set_font("Arial", "", 10)
+                for k, v in acoes_totais.items():
+                    if v > 0:
+                        pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
+                                        pdf.ln(5)
+                pdf.set_font("Arial", "B", 12)
+                pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
+                pdf.set_font("Arial", "", 11)
+                texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
+                pdf.multi_cell(0, 7, txt(texto))
 
-# ============================================================
-# MOMENTO 2 — PRONTUÁRIO DO ALUNO
+                # Anexo: Planilha textual dos casos mais críticos (<= 50%)
+                anex_df = escola[escola["Presenca_Anual"] <= 0.50].copy().sort_values("Presenca_Anual", ascending=True)
+                if not anex_df.empty:
+                    pdf.add_page()
+                    pdf.set_font("Arial", "B", 12)
+                    pdf.cell(0, 8, txt("ANEXO I - Casos Críticos (Frequência <= 50%)"), 0, 1)
+                    pdf.set_font("Arial", "B", 8)
+                    pdf.cell(70, 7, "Nome", 1, 0, "C")
+                    pdf.cell(28, 7, "RA", 1, 0, "C")
+                    pdf.cell(35, 7, "Turma", 1, 0, "C")
+                    pdf.cell(22, 7, "Presença", 1, 0, "C")
+                    pdf.cell(35, 7, "Ações", 1, 1, "C")
+                    pdf.set_font("Arial", "", 8)
+                    for _, ar in anex_df.iterrows():
+                        info_ar = acompanhamento_por_ra.get(str(ar.get("RA", "")), {"qtd_acoes": 0})
+                        pdf.cell(70, 7, txt(str(ar.get("Nome", ""))[:32]), 1, 0)
+                        pdf.cell(28, 7, txt(str(ar.get("RA", ""))[:14]), 1, 0, "C")
+                        pdf.cell(35, 7, txt(str(ar.get("Turma", ""))[:15]), 1, 0)
+                        pdf.cell(22, 7, f"{(ar.get('Presenca_Anual', 0) or 0)*100:.1f}%", 1, 0, "C")
+                        pdf.cell(35, 7, str(info_ar.get("qtd_acoes", 0)), 1, 1, "C")
+
+                pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
+                st.download_button("📥 Baixar Relatório Oficial Completo", data=pdf_out, file_name="Relatorio_SEDUC.pdf")
+                if os.path.exists("evolucao_pdf.png"):
+                    os.remove("evolucao_pdf.png")
+            except Exception as e:
+                registrar_log("ERRO_GERAR_RELATORIO", str(e), nivel="ERRO")
+                st.error(f"Erro ao gerar relatório PDF: {str(e)}")
+
+        # ------------------------------------------------
+        # MÁQUINA DO TEMPO (INSERIR LENDO PLANILHAS/EXCLUIR)
+        # ------------------------------------------------
+        st.markdown("---")
+        with st.expander("⚙️ Gerenciar Histórico de Dados (A Máquina do Tempo)"):
+            st.warning("Se precisar registrar uma data retroativa (ex: 13/03/2026), suba os arquivos daquele dia lá no topo, digite a data abaixo e clique em Salvar.")
+            
+            tab_add, tab_del = st.tabs(["➕ Salvar Leitura na Nuvem", "🗑️ Excluir Data"])
+            
+            with tab_add:
+                with st.form("form_correcao"):
+                    dt_manual = st.text_input("Data do Registro (DD/MM/AAAA):", value=datetime.now().strftime("%d/%m/%Y"))
+                    if st.form_submit_button("Salvar Dados Processados com esta Data"):
+                        # Ele usa os valores lidos automaticamente das planilhas que subiu no topo
+                        hist_dados_limpos = [item for item in hist_dados if item["data"] != dt_manual]
+                        hist_dados_limpos.append({"data": dt_manual, "f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)})
+                        try: hist_dados_limpos.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
+                        except: pass
+                        dados_str = json.dumps(hist_dados_limpos)
+                        if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
+                        else: planilha.append_row([CHAVE_HISTORICO, dados_str])
+                        st.success(f"Os dados da planilha lida foram gravados no dia {dt_manual} com sucesso!")
+                        st.rerun()
+
+            with tab_del:
+                if hist_dados:
+                    datas_disp = [item["data"] for item in hist_dados]
+                    dt_excluir = st.selectbox("Selecione a data para remover do histórico:", datas_disp)
+                    if st.button("Excluir Data Selecionada"):
+                        hist_dados_novo = [item for item in hist_dados if item["data"] != dt_excluir]
+                        planilha.update_cell(linha_hist, 2, json.dumps(hist_dados_novo))
+                        st.success(f"Os dados do dia {dt_excluir} foram apagados com sucesso!")
+                        st.rerun()
+                else: st.info("Nenhum dado histórico gravado ainda.")
+
+        st.markdown("---")
+        st.subheader("Selecionar Turma para Ação")
+        turmas = sorted(
+            criticos_geral["Turma"]
+            .fillna("Turma não identificada")
+            .astype(str)
+            .str.strip()
+            .replace("", "Turma não identificada")
+            .unique()
+        )
+        cols_turma = st.columns(4)
+        for i, t in enumerate(turmas):
+            qtd = len(criticos_geral[criticos_geral["Turma"] == t])
+            if cols_turma[i % 4].button(f"{t} ({qtd} alunos)", key=f"btn_{t}"): st.session_state.turma_selecionada = t
+
+        if st.session_state.turma_selecionada:
+            turma_sel = st.session_state.turma_selecionada
+            st.subheader(f"Lista da Turma: {turma_sel}")
+            alunos_turma = criticos_geral[criticos_geral["Turma"] == turma_sel]
+            for _, row in alunos_turma.iterrows():
+                c1, c2 = st.columns([4, 1])
+                c1.write(f"**{row['Nome']}** (RA: {row['RA']} | Presença Anual: {row['Presenca_Anual']:.2%})")
+                if c2.button("Abrir prontuário", key=f"ficha_{row['RA']}"):
+                    st.session_state.ra_selecionado = row["RA"]; st.success("Acesse a aba 'Prontuário do Aluno' no menu ao lado.")
+                    # ============================================================
+# MOMENTO 2 — PRONTUÁRIO DO ALUNO E AÇÕES
 # ============================================================
 elif menu == "Prontuário do Aluno":
-    st.header("📁 Prontuário Individual do Aluno")
-    ra = st.text_input("RA do aluno", value=st.session_state.ra_selecionado).strip()
+    st.header("Prontuário Individual de Acompanhamento")
+    if st.session_state.dados_escola is None:
+        base_nuvem, _ = carregar_base_nuvem()
+        if base_nuvem is not None:
+            st.session_state.dados_escola = base_nuvem
+    
+    ra = st.text_input("RA do aluno (Apenas números)", value=st.session_state.ra_selecionado)
+    
     if ra:
-        st.session_state.ra_selecionado = ra
-
-        def carregar_dados_nuvem(ra_aluno):
-            todas_linhas = planilha.get_all_values()
-            for i, linha in enumerate(todas_linhas):
-                if i > 0 and len(linha) > 1 and str(linha[0]) == str(ra_aluno):
-                    return carregar_json_seguro(linha[1], f"prontuario_ra_{ra_aluno}")
-            return None
-
-        def salvar_dados_nuvem(dados):
-            todas_linhas = planilha.get_all_values()
-            linha_aluno = -1
-            for i, linha in enumerate(todas_linhas):
-                if i > 0 and len(linha) > 0 and str(linha[0]) == ra:
-                    linha_aluno = i + 1
-                    break
-            dados_str = json.dumps(dados)
-            if linha_aluno != -1: planilha.update_cell(linha_aluno, 2, dados_str)
-            else: planilha.append_row([ra, dados_str])
-
-        dados = carregar_dados_nuvem(ra)
-        if not dados:
-            st.warning("Nenhum prontuário encontrado na nuvem para este RA.")
-            if st.button("Criar novo prontuário"):
-                nome = st.text_input("Nome do aluno")
-                turma = st.text_input("Turma")
-                dados = {
-                    "cadastro": {
-                        "nome": nome, "turma": turma, "status": "Em acompanhamento",
-                        "telefone": "", "email": "", "responsavel": "", "endereco": "",
-                        "data_entrada_acompanhamento": datetime.now().strftime("%d/%m/%Y"),
-                        "frequencia_inicial": 0.0,
-                        "data_saida_acompanhamento": "",
-                    },
-                    "frequencia": [],
-                    "acoes": []
-                }
-                salvar_dados_nuvem(dados)
-                st.success("Prontuário criado!")
-                st.rerun()
-            st.stop()
-
-        if "cadastro" not in dados:
-            dados["cadastro"] = {}
-        dados["cadastro"].setdefault("data_entrada_acompanhamento", datetime.now().strftime("%d/%m/%Y"))
-        dados["cadastro"].setdefault("frequencia_inicial", 0.0)
-        dados["cadastro"].setdefault("data_saida_acompanhamento", "")
-        dados.setdefault("frequencia", [])
-        dados.setdefault("acoes", [])
-
-        status_atual = dados["cadastro"].get("status", "Em acompanhamento")
-
+        nome_aluno = "Estudante não identificado na planilha atual"
+        turma_aluno = "Não informada"
         frequencia_atual = None
-        if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
-            linha_bi = st.session_state.dados_escola[st.session_state.dados_escola["RA"].astype(str) == str(ra)]
-            if not linha_bi.empty:
-                try:
-                    frequencia_atual = float(linha_bi.iloc[-1]["Presenca_Anual"])
-                except Exception:
-                    frequencia_atual = None
+        
+        if st.session_state.dados_escola is not None:
+            busca_aluno = st.session_state.dados_escola[st.session_state.dados_escola["RA"] == ra]
+            if not busca_aluno.empty:
+                nome_aluno = busca_aluno.iloc[0]["Nome"]
+                turma_aluno = str(busca_aluno.iloc[0]["Turma"]).split('-')[0].strip()
+                frequencia_atual = busca_aluno.iloc[0]["Presenca_Anual"]
 
-        st.subheader("Dados Cadastrais")
-        col_a, col_b = st.columns(2)
-        dados["cadastro"]["nome"] = col_a.text_input("Nome", value=dados["cadastro"].get("nome", ""))
-        dados["cadastro"]["turma"] = col_a.text_input("Turma", value=dados["cadastro"].get("turma", ""))
-        dados["cadastro"]["responsavel"] = col_a.text_input("Responsável", value=dados["cadastro"].get("responsavel", ""))
-        dados["cadastro"]["telefone"] = col_b.text_input("Telefone", value=dados["cadastro"].get("telefone", ""))
-        dados["cadastro"]["email"] = col_b.text_input("E-mail", value=dados["cadastro"].get("email", ""))
-        dados["cadastro"]["endereco"] = st.text_input("Endereço", value=dados["cadastro"].get("endereco", ""))
+        todas_linhas = planilha.get_all_values()
+        linha_aluno = -1
+        dados_texto = ""
+        
+        for i, linha in enumerate(todas_linhas):
+            if i > 0 and len(linha) > 0 and str(linha[0]) == str(ra):
+                linha_aluno = i + 1 
+                if len(linha) > 1: dados_texto = linha[1]
+                break
 
-        if st.button("💾 Salvar dados cadastrais"):
-            if not dados["frequencia"] and frequencia_atual is not None:
-                dados["cadastro"]["frequencia_inicial"] = frequencia_atual
-            salvar_dados_nuvem(dados)
-            st.success("Dados salvos!")
+        if dados_texto:
+            dados = carregar_json_seguro(dados_texto, f"prontuario_ra_{ra}") or {}
+            if "cadastro" not in dados: dados["cadastro"] = {"nome": nome_aluno, "turma": turma_aluno, "status": "Em acompanhamento"}
+            if "responsavel" not in dados["cadastro"]: dados["cadastro"]["responsavel"] = ""
+            if "telefone" not in dados["cadastro"]: dados["cadastro"]["telefone"] = ""
+            if "email" not in dados["cadastro"]: dados["cadastro"]["email"] = ""
+            if "endereco" not in dados["cadastro"]: dados["cadastro"]["endereco"] = ""
+            if "data_entrada_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_entrada_acompanhamento"] = datetime.now().strftime("%d/%m/%Y")
+            if "frequencia_inicial" not in dados["cadastro"]: dados["cadastro"]["frequencia_inicial"] = frequencia_atual if frequencia_atual is not None else 0
+            if "data_saida_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_saida_acompanhamento"] = ""
+            if "frequencia" not in dados: dados["frequencia"] = [] 
+        else:
+            dados = {
+                "cadastro": {
+                    "nome": nome_aluno, "turma": turma_aluno, "status": "Em acompanhamento",
+                    "responsavel": "", "telefone": "", "email": "", "endereco": "",
+                    "data_entrada_acompanhamento": datetime.now().strftime("%d/%m/%Y"),
+                    "frequencia_inicial": frequencia_atual if frequencia_atual is not None else 0,
+                    "data_saida_acompanhamento": "",
+                },
+                "acoes": [], "frequencia": []
+            }
 
-        if status_atual == "Em acompanhamento":
+        def salvar_dados_nuvem(dados_atualizados):
+            dados_str = json.dumps(dados_atualizados, ensure_ascii=False)
+            if linha_aluno != -1: planilha.update_cell(linha_aluno, 2, dados_str)
+            else: planilha.append_row([str(ra), dados_str])
+
+        st.markdown("---")
+        col_i1, col_i2, col_i3 = st.columns(3)
+        col_i1.metric("Nome do Estudante", dados["cadastro"]["nome"])
+        col_i2.metric("Turma", dados["cadastro"]["turma"])
+        
+        status_atual = dados["cadastro"].get("status", "Em acompanhamento")
+        if status_atual == "Em acompanhamento": col_i3.success(f"Status: {status_atual}")
+        else: col_i3.error(f"Status: {status_atual}")
+        col_a1, col_a2 = st.columns(2)
+        data_entrada = dados["cadastro"].get("data_entrada_acompanhamento", "não informado")
+        col_a1.info(f"📅 Em acompanhamento desde: **{data_entrada}**")
+        freq_inicial = dados["cadastro"].get("frequencia_inicial")
+        if frequencia_atual is not None and freq_inicial is not None:
+            delta = (frequencia_atual - float(freq_inicial)) * 100
+            tendencia = "progredindo ✅" if delta > 0 else ("regredindo ⚠️" if delta < 0 else "estável")
+            col_a2.info(f"📈 Tendência: **{tendencia}** ({delta:+.1f} p.p.)")
+        st.markdown("---")
+
+        with st.expander("📞 Dados de Contato e Responsável", expanded=True):
+            with st.form("form_dados_cadastrais"):
+                col_cad1, col_cad2 = st.columns(2)
+                responsavel_input = col_cad1.text_input("Nome do Responsável Legal:", value=dados["cadastro"].get("responsavel", ""))
+                telefone_input = col_cad2.text_input("Telefone / WhatsApp (Com DDD):", value=dados["cadastro"].get("telefone", ""))
+                email_input = col_cad1.text_input("E-mail do Responsável:", value=dados["cadastro"].get("email", ""))
+                endereco_input = col_cad2.text_input("Endereço Completo:", value=dados["cadastro"].get("endereco", ""))
+                
+                if st.form_submit_button("💾 Salvar/Atualizar Dados Cadastrais"):
+                    dados["cadastro"]["responsavel"] = responsavel_input; dados["cadastro"]["telefone"] = telefone_input; dados["cadastro"]["email"] = email_input; dados["cadastro"]["endereco"] = endereco_input
+                    salvar_dados_nuvem(dados)
+                    st.success("Dados de contato atualizados na nuvem com sucesso!")
+                    st.rerun()
+
             st.markdown("**Ações Rápidas de Comunicação:**")
             col_b1, col_b2 = st.columns(2)
             freq_str = f"{frequencia_atual*100:.1f}%" if frequencia_atual is not None else "nível crítico"
@@ -680,8 +837,7 @@ elif menu == "Prontuário do Aluno":
                 pdf_al.set_font("Arial", "", 11); pdf_al.multi_cell(0, 6, txt(f"Endereço: {dados['cadastro'].get('endereco', 'Não informado')}")); pdf_al.ln(2)
                 pdf_al.set_font("Arial", "B", 11); pdf_al.cell(0, 8, txt(f"Situação Final: {status_atual.upper()}"), 0, 1)
                 pdf_al.line(10, pdf_al.get_y(), 200, pdf_al.get_y()); pdf_al.ln(5)
-
-                if os.path.exists(f"grafico_freq_{ra}.png"):
+                                if os.path.exists(f"grafico_freq_{ra}.png"):
                     pdf_al.cell(0, 8, txt("Evolução da Frequência do Aluno:"), 0, 1)
                     pdf_al.image(f"grafico_freq_{ra}.png", x=10, w=190); pdf_al.ln(5)
                     os.remove(f"grafico_freq_{ra}.png")
