@@ -383,7 +383,7 @@ if menu == "Diagnóstico Geral":
             pdf.multi_cell(0, 5, txt(cab)); pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2); pdf.ln(5)
             
             pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, txt(f"Data da emissão: {datetime.now().strftime('%d/%m/%Y')}"), 0, 1); pdf.ln(5)
-                        pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
+            pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
             pdf.set_font("Arial", "B", 10)
             pdf.cell(110, 8, "Turma", 1)
             pdf.cell(30, 8, "Qtd Alunos", 1, 0, "C")
