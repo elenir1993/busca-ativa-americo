@@ -676,7 +676,7 @@ elif menu == "Prontuário do Aluno":
         data_entrada = dados["cadastro"].get("data_entrada_acompanhamento", "não informado")
         col_a1.info(f"📅 Em acompanhamento desde: **{data_entrada}**")
         freq_inicial = dados["cadastro"].get("frequencia_inicial")
-                if frequencia_atual is not None and freq_inicial is not None:
+            if frequencia_atual is not None and freq_inicial is not None:
             delta = (frequencia_atual - float(freq_inicial)) * 100
             tendencia = "progredindo ✅" if delta > 0 else ("regredindo ⚠️" if delta < 0 else "estável")
             col_a2.info(f"📈 Tendência: **{tendencia}** ({delta:+.1f} p.p.)")
