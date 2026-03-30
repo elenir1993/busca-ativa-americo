@@ -1,9 +1,4 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/sistema_ba.py b/sistema_ba.py
-index c3fcb2c8a2a824939a13832078972b907a9fc7f1..2b79f88fb6d7c7caf5c5c4f6a3a59bc383d4f6dc 100644
---- a/sistema_ba.py
-+++ b/sistema_ba.py
-@@ -1,203 +1,376 @@
+
 -import streamlit as st
 -import pandas as pd
 -import os
@@ -763,6 +758,3 @@ index c3fcb2c8a2a824939a13832078972b907a9fc7f1..2b79f88fb6d7c7caf5c5c4f6a3a59bc3
 +                        nivel="INFO",
 +                    )
 +                    st.success("Lembrete registrado no log da nuvem.")
- 
-EOF
-)
