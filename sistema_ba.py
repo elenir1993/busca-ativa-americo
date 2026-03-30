@@ -602,7 +602,7 @@ elif menu == "Prontuário do Aluno":
             tendencia = "progredindo ✅" if delta > 0 else ("regredindo ⚠️" if delta < 0 else "estável")
             col_a2.info(f"📈 Tendência: **{tendencia}** ({delta:+.1f} p.p.)")
         st.markdown("---")
-            with st.expander("📞 Dados de Contato e Responsável", expanded=True):
+        with st.expander("📞 Dados de Contato e Responsável", expanded=True):
             with st.form("form_dados_cadastrais"):
                 col_cad1, col_cad2 = st.columns(2)
                 responsavel_input = col_cad1.text_input("Nome do Responsável Legal:", value=dados["cadastro"].get("responsavel", ""))
