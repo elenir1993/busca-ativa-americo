@@ -555,9 +555,9 @@ if menu == "Diagnóstico Geral":
                 pdf.cell(0, 8, txt("3. Funil de Ações Realizadas (Trabalho da Equipe)"), 0, 1)
                 pdf.set_font("Arial", "", 10)
                 for k, v in acoes_totais.items():
-                    if v > 0:
+                if v > 0:
                     pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
-                                        pdf.ln(5)
+                    pdf.ln(5)
                 pdf.set_font("Arial", "B", 12)
                 pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
                 pdf.set_font("Arial", "", 11)
