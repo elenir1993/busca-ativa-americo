@@ -478,177 +478,117 @@ if menu == "Diagnóstico Geral":
             texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
             pdf.multi_cell(0, 7, txt(texto))
 
-            # Anexo: Planilha textual dos casos mais críticos (<= 50%)
             anex_df = escola[escola["Presenca_Anual"] <= 0.50].copy().sort_values("Presenca_Anual", ascending=True)
             if not anex_df.empty:
                 pdf.add_page()
                 pdf.set_font("Arial", "B", 12)
-                pdf.cell(0, 8, txt("ANEXO I - Casos Críticos (Frequência <= 50%)"), 0, 1)
-                pdf.set_font("Arial", "B", 8)
-                pdf.cell(70, 7, "Nome", 1, 0, "C")
-                pdf.cell(28, 7, "RA", 1, 0, "C")
-                pdf.cell(35, 7, "Turma", 1, 0, "C")
-                pdf.cell(22, 7, "Presença", 1, 0, "C")
+                pdf.cell(0, 8, txt("ANEXO - Casos Críticos (Frequência <= 50%)"), 0, 1)
+                pdf.set_font("Arial", "B", 9)
+                pdf.cell(55, 7, "Nome", 1)
+                pdf.cell(30, 7, "RA", 1)
+                pdf.cell(45, 7, "Turma", 1)
+                pdf.cell(25, 7, "Frequência", 1, 0, "C")
                 pdf.cell(35, 7, "Ações", 1, 1, "C")
-                pdf.set_font("Arial", "", 8)
-                for _, ar in anex_df.iterrows():
-                    info_ar = acompanhamento_por_ra.get(str(ar.get("RA", "")), {"qtd_acoes": 0})
-                    pdf.cell(70, 7, txt(str(ar.get("Nome", ""))[:32]), 1, 0)
-                    pdf.cell(28, 7, txt(str(ar.get("RA", ""))[:14]), 1, 0, "C")
-                    pdf.cell(35, 7, txt(str(ar.get("Turma", ""))[:15]), 1, 0)
-                    pdf.cell(22, 7, f"{(ar.get('Presenca_Anual', 0) or 0)*100:.1f}%", 1, 0, "C")
-                    pdf.cell(35, 7, str(info_ar.get("qtd_acoes", 0)), 1, 1, "C")
+                pdf.set_font("Arial", "", 9)
+                for _, linha_al in anex_df.head(120).iterrows():
+                    ra_txt = str(linha_al.get("RA", ""))
+                    nome_txt = txt(str(linha_al.get("Nome", "")))[:28]
+                    turma_txt = txt(str(linha_al.get("Turma", "")))[:22]
+                    freq_txt = f"{float(linha_al.get('Presenca_Anual', 0))*100:.1f}%"
+                    qtd_acoes = acompanhamento_por_ra.get(ra_txt, {}).get("qtd_acoes", 0)
+                    pdf.cell(55, 7, nome_txt, 1)
+                    pdf.cell(30, 7, ra_txt[:14], 1)
+                    pdf.cell(45, 7, turma_txt, 1)
+                    pdf.cell(25, 7, freq_txt, 1, 0, "C")
+                    pdf.cell(35, 7, str(qtd_acoes), 1, 1, "C")
 
-            pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
-            st.download_button("📥 Baixar Relatório Oficial Completo", data=pdf_out, file_name="Relatorio_SEDUC.pdf")
-            if os.path.exists("evolucao_pdf.png"): os.remove("evolucao_pdf.png")
+            st.download_button("📥 Baixar Relatório em PDF", data=pdf.output(dest="S").encode("latin1", "ignore"), file_name=f"Relatorio_Busca_Ativa_{datetime.now().strftime('%d-%m-%Y')}.pdf")
+            st.success("Relatório gerado com sucesso!")
 
-        # ------------------------------------------------
-        # MÁQUINA DO TEMPO (INSERIR LENDO PLANILHAS/EXCLUIR)
-        # ------------------------------------------------
-        st.markdown("---")
-        with st.expander("⚙️ Gerenciar Histórico de Dados (A Máquina do Tempo)"):
-            st.warning("Se precisar registrar uma data retroativa (ex: 13/03/2026), suba os arquivos daquele dia lá no topo, digite a data abaixo e clique em Salvar.")
-            
-            tab_add, tab_del = st.tabs(["➕ Salvar Leitura na Nuvem", "🗑️ Excluir Data"])
-            
-            with tab_add:
-                with st.form("form_correcao"):
-                    dt_manual = st.text_input("Data do Registro (DD/MM/AAAA):", value=datetime.now().strftime("%d/%m/%Y"))
-                    if st.form_submit_button("Salvar Dados Processados com esta Data"):
-                        # Ele usa os valores lidos automaticamente das planilhas que subiu no topo
-                        hist_dados_limpos = [item for item in hist_dados if item["data"] != dt_manual]
-                        hist_dados_limpos.append({"data": dt_manual, "f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)})
-                        try: hist_dados_limpos.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
-                        except: pass
-                        dados_str = json.dumps(hist_dados_limpos)
-                        if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-                        else: planilha.append_row([CHAVE_HISTORICO, dados_str])
-                        st.success(f"Os dados da planilha lida foram gravados no dia {dt_manual} com sucesso!")
-                        st.rerun()
-
-            with tab_del:
-                if hist_dados:
-                    datas_disp = [item["data"] for item in hist_dados]
-                    dt_excluir = st.selectbox("Selecione a data para remover do histórico:", datas_disp)
-                    if st.button("Excluir Data Selecionada"):
-                        hist_dados_novo = [item for item in hist_dados if item["data"] != dt_excluir]
-                        planilha.update_cell(linha_hist, 2, json.dumps(hist_dados_novo))
-                        st.success(f"Os dados do dia {dt_excluir} foram apagados com sucesso!")
-                        st.rerun()
-                else: st.info("Nenhum dado histórico gravado ainda.")
-
-        st.markdown("---")
-        st.subheader("Selecionar Turma para Ação")
-        turmas = sorted(criticos_geral["Turma"].unique())
-        cols_turma = st.columns(4)
-        for i, t in enumerate(turmas):
-            qtd = len(criticos_geral[criticos_geral["Turma"] == t])
-            if cols_turma[i % 4].button(f"{t} ({qtd} alunos)", key=f"btn_{t}"): st.session_state.turma_selecionada = t
-
-        if st.session_state.turma_selecionada:
-            turma_sel = st.session_state.turma_selecionada
-            st.subheader(f"Lista da Turma: {turma_sel}")
-            alunos_turma = criticos_geral[criticos_geral["Turma"] == turma_sel]
-            for _, row in alunos_turma.iterrows():
-                c1, c2 = st.columns([4, 1])
-                c1.write(f"**{row['Nome']}** (RA: {row['RA']} | Presença Anual: {row['Presenca_Anual']:.2%})")
-                if c2.button("Abrir prontuário", key=f"ficha_{row['RA']}"):
-                    st.session_state.ra_selecionado = row["RA"]; st.success("Acesse a aba 'Prontuário do Aluno' no menu ao lado.")
-                    # ============================================================
-# MOMENTO 2 — PRONTUÁRIO DO ALUNO E AÇÕES
+# ============================================================
+# MOMENTO 2 — PRONTUÁRIO DO ALUNO
 # ============================================================
 elif menu == "Prontuário do Aluno":
-    st.header("Prontuário Individual de Acompanhamento")
-    if st.session_state.dados_escola is None:
-        base_nuvem, _ = carregar_base_nuvem()
-        if base_nuvem is not None:
-            st.session_state.dados_escola = base_nuvem
-    
-    ra = st.text_input("RA do aluno (Apenas números)", value=st.session_state.ra_selecionado)
-    
+    st.header("📁 Prontuário Individual do Aluno")
+    ra = st.text_input("RA do aluno", value=st.session_state.ra_selecionado).strip()
     if ra:
-        nome_aluno = "Estudante não identificado na planilha atual"
-        turma_aluno = "Não informada"
-        frequencia_atual = None
-        
-        if st.session_state.dados_escola is not None:
-            busca_aluno = st.session_state.dados_escola[st.session_state.dados_escola["RA"] == ra]
-            if not busca_aluno.empty:
-                nome_aluno = busca_aluno.iloc[0]["Nome"]
-                turma_aluno = str(busca_aluno.iloc[0]["Turma"]).split('-')[0].strip()
-                frequencia_atual = busca_aluno.iloc[0]["Presenca_Anual"]
+        st.session_state.ra_selecionado = ra
 
-        todas_linhas = planilha.get_all_values()
-        linha_aluno = -1
-        dados_texto = ""
-        
-        for i, linha in enumerate(todas_linhas):
-            if i > 0 and len(linha) > 0 and str(linha[0]) == str(ra):
-                linha_aluno = i + 1 
-                if len(linha) > 1: dados_texto = linha[1]
-                break
+        def carregar_dados_nuvem(ra_aluno):
+            todas_linhas = planilha.get_all_values()
+            for i, linha in enumerate(todas_linhas):
+                if i > 0 and len(linha) > 1 and str(linha[0]) == str(ra_aluno):
+                    return carregar_json_seguro(linha[1], f"prontuario_ra_{ra_aluno}")
+            return None
 
-        if dados_texto:
-            dados = carregar_json_seguro(dados_texto, f"prontuario_ra_{ra}") or {}
-            if "cadastro" not in dados: dados["cadastro"] = {"nome": nome_aluno, "turma": turma_aluno, "status": "Em acompanhamento"}
-            if "responsavel" not in dados["cadastro"]: dados["cadastro"]["responsavel"] = ""
-            if "telefone" not in dados["cadastro"]: dados["cadastro"]["telefone"] = ""
-            if "email" not in dados["cadastro"]: dados["cadastro"]["email"] = ""
-            if "endereco" not in dados["cadastro"]: dados["cadastro"]["endereco"] = ""
-            if "data_entrada_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_entrada_acompanhamento"] = datetime.now().strftime("%d/%m/%Y")
-            if "frequencia_inicial" not in dados["cadastro"]: dados["cadastro"]["frequencia_inicial"] = frequencia_atual if frequencia_atual is not None else 0
-            if "data_saida_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_saida_acompanhamento"] = ""
-            if "frequencia" not in dados: dados["frequencia"] = [] 
-        else:
-            dados = {
-                "cadastro": {
-                    "nome": nome_aluno, "turma": turma_aluno, "status": "Em acompanhamento",
-                    "responsavel": "", "telefone": "", "email": "", "endereco": "",
-                    "data_entrada_acompanhamento": datetime.now().strftime("%d/%m/%Y"),
-                    "frequencia_inicial": frequencia_atual if frequencia_atual is not None else 0,
-                    "data_saida_acompanhamento": "",
-                },
-                "acoes": [], "frequencia": []
-            }
-
-        def salvar_dados_nuvem(dados_atualizados):
-            dados_str = json.dumps(dados_atualizados, ensure_ascii=False)
+        def salvar_dados_nuvem(dados):
+            todas_linhas = planilha.get_all_values()
+            linha_aluno = -1
+            for i, linha in enumerate(todas_linhas):
+                if i > 0 and len(linha) > 0 and str(linha[0]) == ra:
+                    linha_aluno = i + 1
+                    break
+            dados_str = json.dumps(dados)
             if linha_aluno != -1: planilha.update_cell(linha_aluno, 2, dados_str)
-            else: planilha.append_row([str(ra), dados_str])
+            else: planilha.append_row([ra, dados_str])
 
-        st.markdown("---")
-        col_i1, col_i2, col_i3 = st.columns(3)
-        col_i1.metric("Nome do Estudante", dados["cadastro"]["nome"])
-        col_i2.metric("Turma", dados["cadastro"]["turma"])
-        
+        dados = carregar_dados_nuvem(ra)
+        if not dados:
+            st.warning("Nenhum prontuário encontrado na nuvem para este RA.")
+            if st.button("Criar novo prontuário"):
+                nome = st.text_input("Nome do aluno")
+                turma = st.text_input("Turma")
+                dados = {
+                    "cadastro": {
+                        "nome": nome, "turma": turma, "status": "Em acompanhamento",
+                        "telefone": "", "email": "", "responsavel": "", "endereco": "",
+                        "data_entrada_acompanhamento": datetime.now().strftime("%d/%m/%Y"),
+                        "frequencia_inicial": 0.0,
+                        "data_saida_acompanhamento": "",
+                    },
+                    "frequencia": [],
+                    "acoes": []
+                }
+                salvar_dados_nuvem(dados)
+                st.success("Prontuário criado!")
+                st.rerun()
+            st.stop()
+
+        if "cadastro" not in dados:
+            dados["cadastro"] = {}
+        dados["cadastro"].setdefault("data_entrada_acompanhamento", datetime.now().strftime("%d/%m/%Y"))
+        dados["cadastro"].setdefault("frequencia_inicial", 0.0)
+        dados["cadastro"].setdefault("data_saida_acompanhamento", "")
+        dados.setdefault("frequencia", [])
+        dados.setdefault("acoes", [])
+
         status_atual = dados["cadastro"].get("status", "Em acompanhamento")
-        if status_atual == "Em acompanhamento": col_i3.success(f"Status: {status_atual}")
-        else: col_i3.error(f"Status: {status_atual}")
-        col_a1, col_a2 = st.columns(2)
-        data_entrada = dados["cadastro"].get("data_entrada_acompanhamento", "não informado")
-        col_a1.info(f"📅 Em acompanhamento desde: **{data_entrada}**")
-        freq_inicial = dados["cadastro"].get("frequencia_inicial")
-        if frequencia_atual is not None and freq_inicial is not None:
-            delta = (frequencia_atual - float(freq_inicial)) * 100
-            tendencia = "progredindo ✅" if delta > 0 else ("regredindo ⚠️" if delta < 0 else "estável")
-            col_a2.info(f"📈 Tendência: **{tendencia}** ({delta:+.1f} p.p.)")
-        st.markdown("---")
 
-        with st.expander("📞 Dados de Contato e Responsável", expanded=True):
-            with st.form("form_dados_cadastrais"):
-                col_cad1, col_cad2 = st.columns(2)
-                responsavel_input = col_cad1.text_input("Nome do Responsável Legal:", value=dados["cadastro"].get("responsavel", ""))
-                telefone_input = col_cad2.text_input("Telefone / WhatsApp (Com DDD):", value=dados["cadastro"].get("telefone", ""))
-                email_input = col_cad1.text_input("E-mail do Responsável:", value=dados["cadastro"].get("email", ""))
-                endereco_input = col_cad2.text_input("Endereço Completo:", value=dados["cadastro"].get("endereco", ""))
-                
-                if st.form_submit_button("💾 Salvar/Atualizar Dados Cadastrais"):
-                    dados["cadastro"]["responsavel"] = responsavel_input; dados["cadastro"]["telefone"] = telefone_input; dados["cadastro"]["email"] = email_input; dados["cadastro"]["endereco"] = endereco_input
-                    salvar_dados_nuvem(dados)
-                    st.success("Dados de contato atualizados na nuvem com sucesso!")
-                    st.rerun()
+        frequencia_atual = None
+        if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
+            linha_bi = st.session_state.dados_escola[st.session_state.dados_escola["RA"].astype(str) == str(ra)]
+            if not linha_bi.empty:
+                try:
+                    frequencia_atual = float(linha_bi.iloc[-1]["Presenca_Anual"])
+                except Exception:
+                    frequencia_atual = None
 
+        st.subheader("Dados Cadastrais")
+        col_a, col_b = st.columns(2)
+        dados["cadastro"]["nome"] = col_a.text_input("Nome", value=dados["cadastro"].get("nome", ""))
+        dados["cadastro"]["turma"] = col_a.text_input("Turma", value=dados["cadastro"].get("turma", ""))
+        dados["cadastro"]["responsavel"] = col_a.text_input("Responsável", value=dados["cadastro"].get("responsavel", ""))
+        dados["cadastro"]["telefone"] = col_b.text_input("Telefone", value=dados["cadastro"].get("telefone", ""))
+        dados["cadastro"]["email"] = col_b.text_input("E-mail", value=dados["cadastro"].get("email", ""))
+        dados["cadastro"]["endereco"] = st.text_input("Endereço", value=dados["cadastro"].get("endereco", ""))
+
+        if st.button("💾 Salvar dados cadastrais"):
+            if not dados["frequencia"] and frequencia_atual is not None:
+                dados["cadastro"]["frequencia_inicial"] = frequencia_atual
+            salvar_dados_nuvem(dados)
+            st.success("Dados salvos!")
+
+        if status_atual == "Em acompanhamento":
             st.markdown("**Ações Rápidas de Comunicação:**")
             col_b1, col_b2 = st.columns(2)
             freq_str = f"{frequencia_atual*100:.1f}%" if frequencia_atual is not None else "nível crítico"
