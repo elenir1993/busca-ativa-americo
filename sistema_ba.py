@@ -203,6 +203,46 @@ def salvar_base_nuvem(df_escola):
     registrar_log("UPLOAD_BASE", f"Batch {batch_id} salvo com {len(df_escola)} alunos.", nivel="INFO")
     return meta
 
+
+def salvar_frequencia_automatica_para_acompanhamento(df_escola):
+    """Grava automaticamente a frequência atual no prontuário de todos os alunos em acompanhamento."""
+    todas_linhas = planilha.get_all_values()
+    mapa_linhas = {}
+    for i, linha in enumerate(todas_linhas):
+        if i > 0 and len(linha) > 1:
+            mapa_linhas[str(linha[0])] = (i + 1, linha[1])
+
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    atualizados = 0
+        for _, row in df_escola.iterrows():
+        ra = str(row.get("RA", ""))
+        freq = row.get("Presenca_Anual")
+        if not ra or pd.isna(freq):
+            continue
+        registro = mapa_linhas.get(ra)
+        if not registro:
+            continue
+        linha_plan, dados_txt = registro
+        dados = carregar_json_seguro(dados_txt, f"auto_freq_ra_{ra}")
+        if not dados:
+            continue
+        if dados.get("cadastro", {}).get("status") != "Em acompanhamento":
+            continue
+        dados.setdefault("frequencia", [])
+        ja_tem_hoje = False
+        for item in dados["frequencia"]:
+            if item.get("data") == hoje:
+                item["valor"] = float(freq)
+                ja_tem_hoje = True
+                break
+        if not ja_tem_hoje:
+            dados["frequencia"].append({"data": hoje, "valor": float(freq)})
+        planilha.update_cell(linha_plan, 2, json.dumps(dados, ensure_ascii=False))
+        atualizados += 1
+
+    if atualizados > 0:
+        registrar_log("AUTO_FREQ", f"Frequência automática gravada para {atualizados} alunos.", nivel="INFO")
+
 # ============================================================
 # SESSION STATE E MENU
 # ============================================================
@@ -217,7 +257,8 @@ menu = st.sidebar.radio("Menu", ["Diagnóstico Geral", "Prontuário do Aluno", "
 
 if st.sidebar.button("Deslogar / Reiniciar"):
     st.session_state.clear(); st.rerun()
-    # ============================================================
+
+# ============================================================
 # MOMENTO 1 — DIAGNÓSTICO GERAL E GRÁFICOS
 # ============================================================
 if menu == "Diagnóstico Geral":
@@ -231,6 +272,7 @@ if menu == "Diagnóstico Geral":
 
     if st.session_state.dados_escola is None and base_nuvem is not None:
         st.session_state.dados_escola = base_nuvem
+        salvar_frequencia_automatica_para_acompanhamento(base_nuvem)
 
     if meta_base and meta_base.get("uploaded_at"):
         st.caption(
@@ -258,6 +300,7 @@ if menu == "Diagnóstico Geral":
         escola["Presenca_Anual"] = pd.to_numeric(escola["Presenca_Anual"], errors="coerce")
         st.session_state.dados_escola = escola
         meta_base = salvar_base_nuvem(escola)
+        salvar_frequencia_automatica_para_acompanhamento(escola)
         st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
 
     if st.session_state.dados_escola is not None:
@@ -296,6 +339,63 @@ if menu == "Diagnóstico Geral":
         plt.tight_layout(); st.pyplot(fig_turmas)
         fig_turmas.savefig("turmas.png", bbox_inches="tight")
 
+        # ------------------------------------------------
+        # DADOS NA NUVEM PARA RELATÓRIO E FUNIL DE AÇÕES
+        # ------------------------------------------------
+        todas_linhas = planilha.get_all_values()
+        linha_hist = -1; hist_dados = []
+        acoes_totais = {"WhatsApp": 0, "Contato Telefônico": 0, "Notificação Formal": 0, "Reunião Presencial": 0, "Visita Domiciliar": 0, "Acionamento Conselho Tutelar": 0, "Outros": 0}
+        acoes_por_turma = {}
+        acompanhamento_por_ra = {}
+
+        for i, linha in enumerate(todas_linhas):
+            if i > 0 and len(linha) > 0:
+                chave_linha = str(linha[0])
+                if chave_linha == CHAVE_HISTORICO:
+                    linha_hist = i + 1
+                    if len(linha) > 1:
+                        hist_dados = carregar_json_seguro(linha[1], "historico_sistema") or []
+                elif chave_linha == CHAVE_META_BASE or chave_linha.startswith(PREFIXO_BASE):
+                    continue
+                elif len(linha) > 1:
+                    dados_aluno = carregar_json_seguro(linha[1], "acoes_totais_prontuario")
+                    if dados_aluno:
+                        ra_ref = str(linha[0])
+                        cadastro = dados_aluno.get("cadastro", {})
+                        turma_ref = cadastro.get("turma", "Não informada")
+                        qtd_acoes = len(dados_aluno.get("acoes", []))
+                        acoes_por_turma[turma_ref] = acoes_por_turma.get(turma_ref, 0) + qtd_acoes
+                        acompanhamento_por_ra[ra_ref] = {
+                            "entrada": cadastro.get("data_entrada_acompanhamento", ""),
+                            "qtd_acoes": qtd_acoes,
+                        }
+                        for acao in dados_aluno.get("acoes", []):
+                            nome_acao = acao.get("acao", "").lower()
+                            if "whatsapp" in nome_acao: acoes_totais["WhatsApp"] += 1
+                            elif "telefônico" in nome_acao or "telefonico" in nome_acao: acoes_totais["Contato Telefônico"] += 1
+                            elif "notificação" in nome_acao or "notificacao" in nome_acao: acoes_totais["Notificação Formal"] += 1
+                            elif "reunião" in nome_acao or "reuniao" in nome_acao: acoes_totais["Reunião Presencial"] += 1
+                            elif "visita" in nome_acao: acoes_totais["Visita Domiciliar"] += 1
+                            elif "conselho" in nome_acao: acoes_totais["Acionamento Conselho Tutelar"] += 1
+                            else: acoes_totais["Outros"] += 1
+
+        st.markdown("---")
+        st.subheader("📊 Relatório Oficial SEDUC (Com Evolução e Funil)")
+        analise_qualitativa = st.text_area("Análise Qualitativa para o Relatório:", placeholder="Descreva os avanços observados e o trabalho da equipe...")
+
+        if st.button("📄 Gravar Hoje e Gerar Relatório PDF"):
+            hoje = datetime.now().strftime("%d/%m/%Y")
+            st.subheader("Concentração de Faltas por Turma (< 76%)")
+        resumo = criticos_geral["Turma"].value_counts()
+        
+        fig_turmas, ax_turmas = plt.subplots(figsize=(12, 6))
+        bars = ax_turmas.bar(resumo.index, resumo.values, color="#3B82F6", edgecolor="#2563EB", linewidth=1.2, alpha=0.8)
+        ax_turmas.spines['top'].set_visible(False); ax_turmas.spines['right'].set_visible(False); ax_turmas.spines['left'].set_visible(False)
+        ax_turmas.yaxis.grid(True, linestyle='--', alpha=0.4); plt.xticks(rotation=45, ha='right', fontsize=9, color="#374151")
+        ax_turmas.set_ylabel("Quantidade de Alunos", fontsize=10, fontweight='bold', color="#4B5563")
+        ax_turmas.bar_label(bars, padding=3, fontsize=10, fontweight='bold', color="#1E3A8A")
+        plt.tight_layout(); st.pyplot(fig_turmas)
+        fig_turmas.savefig("turmas.png", bbox_inches="tight")
         # ------------------------------------------------
         # DADOS NA NUVEM PARA RELATÓRIO E FUNIL DE AÇÕES
         # ------------------------------------------------
@@ -346,7 +446,7 @@ if menu == "Diagnóstico Geral":
             hist_dados_limpos = {}
             for item in hist_dados:
                 d_str = item["data"]
-                if "-" in d_str:
+                if "-" in d_str: 
                     try: d_str = datetime.strptime(d_str, "%Y-%m-%d").strftime("%d/%m/%Y")
                     except: pass
                 if "f1" in item: hist_dados_limpos[d_str] = {"f1": item["f1"], "f2": item["f2"], "f3": item["f3"], "f4": item["f4"]}
@@ -383,6 +483,7 @@ if menu == "Diagnóstico Geral":
             pdf.multi_cell(0, 5, txt(cab)); pdf.line(10, pdf.get_y()+2, 200, pdf.get_y()+2); pdf.ln(5)
             
             pdf.set_font("Arial", "B", 11); pdf.cell(0, 6, txt(f"Data da emissão: {datetime.now().strftime('%d/%m/%Y')}"), 0, 1); pdf.ln(5)
+
             pdf.cell(0, 8, txt("1. Distribuição por Turma (Cenário Atual < 76%)"), 0, 1)
             pdf.set_font("Arial", "B", 10)
             pdf.cell(110, 8, "Turma", 1)
@@ -391,7 +492,8 @@ if menu == "Diagnóstico Geral":
             pdf.set_font("Arial", "", 10)
             for t, q in resumo.items():
                 acoes_turma = acoes_por_turma.get(str(t), 0)
-                pdf.cell(110, 8, txt(str(t)), 1)
+                turma_txt = txt(str(t))[:32]
+                pdf.cell(110, 8, turma_txt, 1)
                 pdf.cell(30, 8, str(q), 1, 0, "C")
                 pdf.cell(40, 8, str(acoes_turma), 1, 1, "C")
             
@@ -416,32 +518,9 @@ if menu == "Diagnóstico Geral":
                 if v > 0:
                     pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
 
-            pdf.ln(4)
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 8, txt("4. Casos de Maior Urgência (Base Atual)"), 0, 1)
-            pdf.set_font("Arial", "B", 9)
-            pdf.cell(70, 8, "Nome", 1, 0, "C")
-            pdf.cell(40, 8, "Turma", 1, 0, "C")
-            pdf.cell(35, 8, "RA", 1, 0, "C")
-            pdf.cell(35, 8, "Presença", 1, 1, "C")
-            pdf.set_font("Arial", "", 9)
-            urgentes_pdf = escola[escola["Presenca_Anual"] <= 0.50].sort_values("Presenca_Anual", ascending=True).head(10)
-            for _, urg in urgentes_pdf.iterrows():
-                info_urg = acompanhamento_por_ra.get(str(urg.get("RA", "")), {"entrada": "", "qtd_acoes": 0})
-                pdf.cell(70, 8, txt(str(urg.get("Nome", ""))[:35]), 1, 0)
-                pdf.cell(40, 8, txt(str(urg.get("Turma", ""))[:20]), 1, 0)
-                pdf.cell(35, 8, txt(str(urg.get("RA", ""))[:15]), 1, 0)
-                pres_txt = f"{(urg.get('Presenca_Anual', 0) or 0) * 100:.1f}%"
-                pdf.cell(35, 8, pres_txt, 1, 1, "C")
-                if info_urg.get("entrada") or info_urg.get("qtd_acoes", 0) > 0:
-                    txt_and = f"  ↳ Em acompanhamento desde: {info_urg.get('entrada') or 'não informado'} | Ações registradas: {info_urg.get('qtd_acoes', 0)}"
-                    pdf.set_font("Arial", "I", 8)
-                    pdf.cell(0, 6, txt(txt_and), 0, 1)
-                    pdf.set_font("Arial", "", 9)
-
             pdf.ln(5)
             pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 8, txt("5. Análise Qualitativa"), 0, 1)
+            pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1)
             pdf.set_font("Arial", "", 11)
             texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
             pdf.multi_cell(0, 7, txt(texto))
@@ -553,7 +632,7 @@ elif menu == "Prontuário do Aluno":
         
         for i, linha in enumerate(todas_linhas):
             if i > 0 and len(linha) > 0 and str(linha[0]) == str(ra):
-                linha_aluno = i + 1
+                linha_aluno = i + 1 
                 if len(linha) > 1: dados_texto = linha[1]
                 break
 
@@ -567,7 +646,7 @@ elif menu == "Prontuário do Aluno":
             if "data_entrada_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_entrada_acompanhamento"] = datetime.now().strftime("%d/%m/%Y")
             if "frequencia_inicial" not in dados["cadastro"]: dados["cadastro"]["frequencia_inicial"] = frequencia_atual if frequencia_atual is not None else 0
             if "data_saida_acompanhamento" not in dados["cadastro"]: dados["cadastro"]["data_saida_acompanhamento"] = ""
-            if "frequencia" not in dados: dados["frequencia"] = []
+            if "frequencia" not in dados: dados["frequencia"] = [] 
         else:
             dados = {
                 "cadastro": {
@@ -597,11 +676,12 @@ elif menu == "Prontuário do Aluno":
         data_entrada = dados["cadastro"].get("data_entrada_acompanhamento", "não informado")
         col_a1.info(f"📅 Em acompanhamento desde: **{data_entrada}**")
         freq_inicial = dados["cadastro"].get("frequencia_inicial")
-        if frequencia_atual is not None and freq_inicial is not None:
+                if frequencia_atual is not None and freq_inicial is not None:
             delta = (frequencia_atual - float(freq_inicial)) * 100
             tendencia = "progredindo ✅" if delta > 0 else ("regredindo ⚠️" if delta < 0 else "estável")
             col_a2.info(f"📈 Tendência: **{tendencia}** ({delta:+.1f} p.p.)")
         st.markdown("---")
+
         with st.expander("📞 Dados de Contato e Responsável", expanded=True):
             with st.form("form_dados_cadastrais"):
                 col_cad1, col_cad2 = st.columns(2)
@@ -968,4 +1048,4 @@ elif menu == "Painel de Lembretes e Disparo":
                         nivel="INFO",
                     )
                     st.success("Lembrete registrado no log da nuvem.")
-        
+            
