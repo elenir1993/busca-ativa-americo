@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import json
 import matplotlib.pyplot as plt
+import uuid
 from datetime import datetime
 from fpdf import FPDF
 import re
@@ -51,6 +52,115 @@ def obter_planilha():
 
 planilha = obter_planilha()
 
+CHAVE_HISTORICO = "HISTORICO_SISTEMA"
+CHAVE_META_BASE = "CURRENT_DATA_META"
+PREFIXO_BASE = "CURRENT_DATA::"
+
+
+def semana_iso_atual():
+    hoje = datetime.now().isocalendar()
+    return f"{hoje.year}-W{hoje.week:02d}"
+
+
+def atualizar_ou_criar_linha(chave, valor):
+    todas_linhas = planilha.get_all_values()
+    for i, linha in enumerate(todas_linhas):
+        if i > 0 and len(linha) > 0 and str(linha[0]) == chave:
+            planilha.update_cell(i + 1, 2, valor)
+            return
+    planilha.append_row([chave, valor])
+
+
+def carregar_base_nuvem():
+    todas_linhas = planilha.get_all_values()
+    meta = None
+    for i, linha in enumerate(todas_linhas):
+        if i > 0 and len(linha) > 1 and str(linha[0]) == CHAVE_META_BASE:
+            try:
+                meta = json.loads(linha[1])
+            except:
+                meta = None
+            break
+
+    if not meta or not meta.get("batch_id"):
+        return None, meta
+
+    batch_id = meta["batch_id"]
+    registros = []
+    for i, linha in enumerate(todas_linhas):
+        if i > 0 and len(linha) > 1 and str(linha[0]) == f"{PREFIXO_BASE}{batch_id}":
+            try:
+                item = json.loads(linha[1])
+                registros.append(
+                    {
+                        "Turma": item.get("turma"),
+                        "RA": str(item.get("ra", "")),
+                        "Nome": item.get("nome"),
+                        "Presenca_Anual": item.get("presenca_anual"),
+                    }
+                )
+            except:
+                pass
+
+    if not registros:
+        return None, meta
+    df = pd.DataFrame(registros)
+    df["Presenca_Anual"] = pd.to_numeric(df["Presenca_Anual"], errors="coerce")
+    return df, meta
+
+
+def resetar_base_semanal_se_necessario(meta):
+    semana_atual = semana_iso_atual()
+    semana_registrada = (meta or {}).get("week_key")
+
+    if semana_registrada and semana_registrada != semana_atual:
+        nova_meta = {
+            "batch_id": "",
+            "uploaded_at": "",
+            "total_alunos": 0,
+            "week_key": semana_atual,
+            "reset_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
+        }
+        atualizar_ou_criar_linha(CHAVE_META_BASE, json.dumps(nova_meta, ensure_ascii=False))
+        return nova_meta, True
+    return meta, False
+
+
+def salvar_base_nuvem(df_escola):
+    df_escola = df_escola.copy()
+    if "RA" in df_escola.columns:
+        df_escola["RA"] = df_escola["RA"].astype(str)
+        df_escola = df_escola.drop_duplicates(subset=["RA"], keep="last")
+
+    batch_id = uuid.uuid4().hex[:10]
+    momento = datetime.now().strftime("%d/%m/%Y %H:%M")
+    week_key = semana_iso_atual()
+
+    linhas = []
+    for _, row in df_escola.iterrows():
+        payload = {
+            "batch_id": batch_id,
+            "uploaded_at": momento,
+            "turma": str(row.get("Turma", "")),
+            "ra": str(row.get("RA", "")),
+            "nome": str(row.get("Nome", "")),
+            "presenca_anual": float(row.get("Presenca_Anual", 0)) if pd.notnull(row.get("Presenca_Anual")) else None,
+        }
+        linhas.append([f"{PREFIXO_BASE}{batch_id}", json.dumps(payload, ensure_ascii=False)])
+
+    if linhas:
+        planilha.append_rows(linhas, value_input_option="RAW")
+
+    meta = {
+        "batch_id": batch_id,
+        "uploaded_at": momento,
+        "total_alunos": int(len(df_escola)),
+        "week_key": week_key,
+        "reset_at": "",
+    }
+    atualizar_ou_criar_linha(CHAVE_META_BASE, json.dumps(meta, ensure_ascii=False))
+    return meta
+
 # ============================================================
 # SESSION STATE E MENU
 # ============================================================
@@ -71,6 +181,22 @@ if st.sidebar.button("Deslogar / Reiniciar"):
 # ============================================================
 if menu == "Diagnóstico Geral":
     st.header("Diagnóstico de Frequência Escolar (Evolutivo)")
+    base_nuvem, meta_base = carregar_base_nuvem()
+    meta_base, houve_reset = resetar_base_semanal_se_necessario(meta_base)
+    if houve_reset:
+        st.session_state.dados_escola = None
+        base_nuvem = None
+        st.info("📅 A base semanal foi reiniciada automaticamente para a nova semana. Faça o upload das novas planilhas.")
+
+    if st.session_state.dados_escola is None and base_nuvem is not None:
+        st.session_state.dados_escola = base_nuvem
+
+    if meta_base and meta_base.get("uploaded_at"):
+        st.caption(
+            f"Base compartilhada ativa: {meta_base.get('total_alunos', 0)} alunos | "
+            f"Último upload em {meta_base['uploaded_at']} | Semana {meta_base.get('week_key', '-')}"
+        )
+
     arquivos = st.file_uploader("Carregar planilhas do BI", type=["xlsx"], accept_multiple_files=True)
 
     if arquivos:
@@ -90,6 +216,8 @@ if menu == "Diagnóstico Geral":
         escola = pd.concat(lista, ignore_index=True)
         escola["Presenca_Anual"] = pd.to_numeric(escola["Presenca_Anual"], errors="coerce")
         st.session_state.dados_escola = escola
+        meta_base = salvar_base_nuvem(escola)
+        st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
 
     if st.session_state.dados_escola is not None:
         escola = st.session_state.dados_escola
@@ -135,9 +263,12 @@ if menu == "Diagnóstico Geral":
         
         for i, linha in enumerate(todas_linhas):
             if i > 0 and len(linha) > 0:
-                if str(linha[0]) == "HISTORICO_SISTEMA":
+                chave_linha = str(linha[0])
+                if chave_linha == CHAVE_HISTORICO:
                     linha_hist = i + 1
                     if len(linha) > 1: hist_dados = json.loads(linha[1])
+                elif chave_linha == CHAVE_META_BASE or chave_linha.startswith(PREFIXO_BASE):
+                    continue
                 elif len(linha) > 1:
                     try:
                         dados_aluno = json.loads(linha[1])
@@ -175,7 +306,7 @@ if menu == "Diagnóstico Geral":
                 
             dados_str = json.dumps(hist_dados_novo)
             if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-            else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
+            else: planilha.append_row([CHAVE_HISTORICO, dados_str])
 
             hist_df = pd.DataFrame(hist_dados_novo)
             fig_evol, ax_evol = plt.subplots(figsize=(10, 4))
@@ -253,7 +384,7 @@ if menu == "Diagnóstico Geral":
                         except: pass
                         dados_str = json.dumps(hist_dados_limpos)
                         if linha_hist != -1: planilha.update_cell(linha_hist, 2, dados_str)
-                        else: planilha.append_row(["HISTORICO_SISTEMA", dados_str])
+                        else: planilha.append_row([CHAVE_HISTORICO, dados_str])
                         st.success(f"Os dados da planilha lida foram gravados no dia {dt_manual} com sucesso!")
                         st.rerun()
 
@@ -290,6 +421,10 @@ if menu == "Diagnóstico Geral":
 # ============================================================
 elif menu == "Prontuário do Aluno":
     st.header("Prontuário Individual de Acompanhamento")
+    if st.session_state.dados_escola is None:
+        base_nuvem, _ = carregar_base_nuvem()
+        if base_nuvem is not None:
+            st.session_state.dados_escola = base_nuvem
     
     ra = st.text_input("RA do aluno (Apenas números)", value=st.session_state.ra_selecionado)
     
@@ -471,7 +606,8 @@ elif menu == "Painel de Lembretes e Disparo":
     alunos_ativos = []
     
     for i, linha in enumerate(todas_linhas):
-        if i > 0 and len(linha) > 1 and str(linha[0]) != "HISTORICO_SISTEMA":
+        chave_linha = str(linha[0]) if len(linha) > 0 else ""
+        if i > 0 and len(linha) > 1 and chave_linha != CHAVE_HISTORICO and chave_linha != CHAVE_META_BASE and not chave_linha.startswith(PREFIXO_BASE):
             try:
                 dados_aluno = json.loads(linha[1])
                 
@@ -515,7 +651,7 @@ elif menu == "Painel de Lembretes e Disparo":
         st.subheader("Disparo Rápido para Alunos em Acompanhamento")
         st.write("A mensagem abaixo já está formatada com as regras institucionais e o link da Sala do Futuro.")
         
-        texto_base = "⚠️ *Notificação Escolar - EE Dr. Américo Brasiliense*\n\nPrezado(a) responsável,\n\nInformamos que a frequência escolar do(a) estudante encontra-se em nível crítico e em acompanhamento intensivo pela nossa equipe.\n\nCaso a frequência não aumente nos próximos 15 dias, o caso será encaminhado ao *Conselho Tutelar*.\n\nPedimos que acompanhe a frequência pela Sala do Futuro: https://saladofuturo.educacao.sp.gov.br/login-responsaveis \n\nPara sanar dúvidas ou justificar faltas, compareça à escola presencialmente às *terças ou quintas-feiras, das 14:00 às 20:00*, e procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor)."
+        texto_base = "⚠️ *Notificação Escolar - EE Dr. Amrico Brasiliense*\n\nPrezado(a) responsável,\n\nInformamos que a frequência escolar do(a) estudante encontra-se em nível crítico e em acompanhamento intensivo pela nossa equipe.\n\nCaso a frequência não aumente nos próximos 15 dias, o caso será encaminhado ao *Conselho Tutelar*.\n\nPedimos que acompanhe a frequência pela Sala do Futuro: https://saladofuturo.educacao.sp.gov.br/login-responsaveis \n\nPara sanar dúvidas ou justificar faltas, compareça à escola presencialmente às *terças ou quintas-feiras, das 14:00 às 20:00*, e procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor)."
         
         msg_padrao = st.text_area("Mensagem Padrão para Disparo:", value=texto_base, height=250)
         
