@@ -216,9 +216,7 @@ st.subheader("EE Dr. Américo Brasiliense")
 menu = st.sidebar.radio("Menu", ["Diagnóstico Geral", "Prontuário do Aluno", "Painel de Lembretes e Disparo"])
 
 if st.sidebar.button("Deslogar / Reiniciar"):
-    st.session_state.clear(); st.rerun()
-
-# ============================================================
+    # ============================================================
 # MOMENTO 1 — DIAGNÓSTICO GERAL E GRÁFICOS
 # ============================================================
 if menu == "Diagnóstico Geral":
@@ -258,9 +256,6 @@ if menu == "Diagnóstico Geral":
         escola = pd.concat(lista, ignore_index=True)
         escola["Presenca_Anual"] = pd.to_numeric(escola["Presenca_Anual"], errors="coerce")
         st.session_state.dados_escola = escola
-
-###__PART2__###
-
         meta_base = salvar_base_nuvem(escola)
         st.success(f"Planilhas processadas e publicadas para toda a escola. Upload: {meta_base['uploaded_at']}")
 
@@ -401,11 +396,27 @@ if menu == "Diagnóstico Geral":
             for k, v in acoes_totais.items():
                 if v > 0: pdf.cell(0, 6, txt(f"- {k}: {v} intervenções registradas na plataforma"), 0, 1)
 
-            pdf.ln(5); pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("4. Análise Qualitativa"), 0, 1); pdf.set_font("Arial", "", 11)
+            pdf.ln(4)
+            pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("4. Casos de Maior Urgência (Base Atual)"), 0, 1)
+            pdf.set_font("Arial", "B", 9)
+            pdf.cell(70, 8, "Nome", 1, 0, "C")
+            pdf.cell(40, 8, "Turma", 1, 0, "C")
+            pdf.cell(35, 8, "RA", 1, 0, "C")
+            pdf.cell(35, 8, "Presença", 1, 1, "C")
+            pdf.set_font("Arial", "", 9)
+            urgentes_pdf = criticos_geral.sort_values("Presenca_Anual", ascending=True).head(10)
+            for _, urg in urgentes_pdf.iterrows():
+                pdf.cell(70, 8, txt(str(urg.get("Nome", ""))[:35]), 1, 0)
+                pdf.cell(40, 8, txt(str(urg.get("Turma", ""))[:20]), 1, 0)
+                pdf.cell(35, 8, txt(str(urg.get("RA", ""))[:15]), 1, 0)
+                pres_txt = f"{(urg.get('Presenca_Anual', 0) or 0)*100:.1f}%"
+                pdf.cell(35, 8, pres_txt, 1, 1, "C")
+
+            pdf.ln(5); pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("5. Análise Qualitativa"), 0, 1); pdf.set_font("Arial", "", 11)
             texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
-            pdf.multi_cell(0, 7, txt(texto)) 
-            
-            pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
+            pdf.multi_cell(0, 7, txt(texto))
+    st.session_state.clear(); st.rerun()
+                pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
             st.download_button("📥 Baixar Relatório Oficial Completo", data=pdf_out, file_name="Relatorio_SEDUC.pdf")
             if os.path.exists("evolucao_pdf.png"): os.remove("evolucao_pdf.png")
 
@@ -422,7 +433,6 @@ if menu == "Diagnóstico Geral":
                 with st.form("form_correcao"):
                     dt_manual = st.text_input("Data do Registro (DD/MM/AAAA):", value=datetime.now().strftime("%d/%m/%Y"))
                     if st.form_submit_button("Salvar Dados Processados com esta Data"):
-                        # Ele usa os valores lidos automaticamente das planilhas que subiu no topo
                         hist_dados_limpos = [item for item in hist_dados if item["data"] != dt_manual]
                         hist_dados_limpos.append({"data": dt_manual, "f1": len(f1), "f2": len(f2), "f3": len(f3), "f4": len(f4)})
                         try: hist_dados_limpos.sort(key=lambda x: datetime.strptime(x["data"], "%d/%m/%Y"))
@@ -491,7 +501,7 @@ elif menu == "Prontuário do Aluno":
         
         for i, linha in enumerate(todas_linhas):
             if i > 0 and len(linha) > 0 and str(linha[0]) == str(ra):
-                linha_aluno = i + 1 
+                linha_aluno = i + 1
                 if len(linha) > 1: dados_texto = linha[1]
                 break
 
@@ -502,7 +512,7 @@ elif menu == "Prontuário do Aluno":
             if "telefone" not in dados["cadastro"]: dados["cadastro"]["telefone"] = ""
             if "email" not in dados["cadastro"]: dados["cadastro"]["email"] = ""
             if "endereco" not in dados["cadastro"]: dados["cadastro"]["endereco"] = ""
-            if "frequencia" not in dados: dados["frequencia"] = [] 
+            if "frequencia" not in dados: dados["frequencia"] = []
         else:
             dados = {"cadastro": {"nome": nome_aluno, "turma": turma_aluno, "status": "Em acompanhamento", "responsavel": "", "telefone": "", "email": "", "endereco": ""}, "acoes": [], "frequencia": []}
 
@@ -520,9 +530,6 @@ elif menu == "Prontuário do Aluno":
         if status_atual == "Em acompanhamento": col_i3.success(f"Status: {status_atual}")
         else: col_i3.error(f"Status: {status_atual}")
         st.markdown("---")
-
-
-###__PART3__###
 
         with st.expander("📞 Dados de Contato e Responsável", expanded=True):
             with st.form("form_dados_cadastrais"):
@@ -597,51 +604,6 @@ elif menu == "Prontuário do Aluno":
                     salvar_dados_nuvem(dados); st.success("Prontuário encerrado!"); st.rerun()
         else:
             st.info(f"🔒 Este prontuário encontra-se FECHADO pelo motivo: {status_atual}.")
-            # ------------------------------------------------
-        # PDFs DO PRONTUÁRIO INDIVIDUAL
-        # ------------------------------------------------
-        if dados["acoes"]:
-            st.markdown("### Histórico de Intervenções e Relatos")
-            st.table(pd.DataFrame(dados["acoes"]))
-            
-            col_bpdf1, col_bpdf2 = st.columns(2)
-            if col_bpdf1.button("Gerar PDF de Resumo do Prontuário"):
-                pdf_al = FPDF(); pdf_al.add_page()
-                pdf_al.set_font("Arial", "B", 14); pdf_al.cell(0, 10, txt("RESUMO DE PRONTUÁRIO - BUSCA ATIVA"), 0, 1, "C"); pdf_al.ln(5)
-                pdf_al.set_font("Arial", "B", 11)
-                pdf_al.cell(0, 8, txt(f"Estudante: {dados['cadastro']['nome']} (RA: {ra})"), 0, 1)
-                pdf_al.cell(0, 8, txt(f"Turma: {dados['cadastro']['turma']}"), 0, 1)
-                pdf_al.cell(0, 8, txt(f"Responsável: {dados['cadastro'].get('responsavel', 'Não informado')}"), 0, 1)
-                pdf_al.cell(0, 8, txt(f"Telefone: {dados['cadastro'].get('telefone', 'Não informado')}"), 0, 1)
-                pdf_al.set_font("Arial", "", 11); pdf_al.multi_cell(0, 6, txt(f"Endereço: {dados['cadastro'].get('endereco', 'Não informado')}")); pdf_al.ln(2)
-                pdf_al.set_font("Arial", "B", 11); pdf_al.cell(0, 8, txt(f"Situação Final: {status_atual.upper()}"), 0, 1)
-                pdf_al.line(10, pdf_al.get_y(), 200, pdf_al.get_y()); pdf_al.ln(5)
-
-                if os.path.exists(f"grafico_freq_{ra}.png"):
-                    pdf_al.cell(0, 8, txt("Evolução da Frequência do Aluno:"), 0, 1)
-                    pdf_al.image(f"grafico_freq_{ra}.png", x=10, w=190); pdf_al.ln(5)
-                    os.remove(f"grafico_freq_{ra}.png")
-                
-                pdf_al.set_font("Arial", "B", 12); pdf_al.cell(0, 8, txt("Histórico de Intervenções:"), 0, 1); pdf_al.ln(2)
-                pdf_al.set_font("Arial", "", 10)
-                for a in dados["acoes"]:
-                    pdf_al.set_font("Arial", "B", 10); pdf_al.cell(0, 7, txt(f"Data: {a['data']} | Ação: {a['acao']}"), 0, 1)
-                    pdf_al.set_font("Arial", "", 10); pdf_al.multi_cell(0, 6, txt(f"Relato: {a['relato']}")); pdf_al.ln(4)
-                
-                col_bpdf1.download_button("Baixar Resumo em PDF", data=pdf_al.output(dest="S").encode("latin1", "ignore"), file_name=f"Resumo_{ra}.pdf")
-
-            if col_bpdf2.button("✉️ Gerar Carta de Convocação Física"):
-                pdf_carta = FPDF(); pdf_carta.add_page()
-                pdf_carta.set_font("Arial", "B", 14); pdf_carta.cell(0, 10, txt("GOVERNO DO ESTADO DE SÃO PAULO"), 0, 1, "C")
-                pdf_carta.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C"); pdf_carta.ln(10)
-                pdf_carta.set_font("Arial", "B", 16); pdf_carta.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C"); pdf_carta.ln(10)
-                pdf_carta.set_font("Arial", "", 12)
-                texto_carta = f"Prezado(a) Responsável ({dados['cadastro'].get('responsavel', '________________________')}),\n\nConvocamos o(a) senhor(a) a comparecer, com urgência, à EE Dr. Américo Brasiliense para tratarmos da baixa frequência do(a) estudante {dados['cadastro']['nome']}, matriculado(a) na turma {dados['cadastro']['turma']} (RA: {ra}).\n\nO não comparecimento acarretará nas devidas providências legais junto ao Conselho Tutelar.\n\nSanto André, {datetime.now().strftime('%d/%m/%Y')}."
-                pdf_carta.multi_cell(0, 8, txt(texto_carta)); pdf_carta.ln(20)
-                pdf_carta.cell(0, 8, "___________________________________________________", 0, 1, "C")
-                pdf_carta.cell(0, 8, txt("Assinatura da Direção / Coordenação"), 0, 1, "C"); pdf_carta.ln(10)
-                pdf_carta.cell(0, 8, txt("Ciente do Responsável: ___________________________________  Data: ___/___/___"), 0, 1, "C")
-                col_bpdf2.download_button("📥 Baixar Carta em PDF", data=pdf_carta.output(dest="S").encode("latin1", "ignore"), file_name=f"Carta_{ra}.pdf")
 
 # ============================================================
 # MOMENTO 3 — PAINEL DE LEMBRETES E DISPARO
@@ -661,40 +623,70 @@ elif menu == "Painel de Lembretes e Disparo":
         chave_linha = str(linha[0]) if len(linha) > 0 else ""
         if i > 0 and len(linha) > 1 and chave_linha != CHAVE_HISTORICO and chave_linha != CHAVE_META_BASE and not chave_linha.startswith(PREFIXO_BASE):
             dados_aluno = carregar_json_seguro(linha[1], "painel_lembretes")
-            if dados_aluno:
-                if dados_aluno.get("cadastro", {}).get("status") == "Em acompanhamento":
-                    tel_bruto = dados_aluno["cadastro"].get("telefone", "")
-                    num_zap = ''.join(filter(str.isdigit, tel_bruto))
-                    
-                    dias_passados = 0
-                    acoes = dados_aluno.get("acoes", [])
-                    
-                    if acoes:
-                        primeira_acao_data = acoes[0]["data"][:10]
-                        ultima_acao = acoes[-1]
-                        data_ultima_str = ultima_acao["data"][:10]
-                        try:
-                            data_ultima_obj = datetime.strptime(data_ultima_str, "%d/%m/%Y")
-                            dias_passados = (datetime.now() - data_ultima_obj).days
-                            if dias_passados >= 5:
-                                lembretes.append({
-                                    "RA": str(linha[0]),
-                                    "Nome": dados_aluno["cadastro"]["nome"],
-                                    "Turma": dados_aluno["cadastro"]["turma"],
-                                    "Dias sem contato": dias_passados,
-                                    "Primeiro Contato": primeira_acao_data,
-                                    "Última Ação Realizada": ultima_acao["acao"]
-                                })
-                        except Exception as e:
-                            registrar_log("DATA_ACAO_INVALIDA", f"RA {linha[0]}: {str(e)}", nivel="ALERTA")
-                    
-                    alunos_ativos.append({
-                        "RA": str(linha[0]),
-                        "Nome": dados_aluno["cadastro"]["nome"],
-                        "Turma": dados_aluno["cadastro"]["turma"],
-                        "Zap": num_zap,
-                        "Dias": dias_passados
-                    })
+            if dados_aluno and dados_aluno.get("cadastro", {}).get("status") == "Em acompanhamento":
+                tel_bruto = dados_aluno["cadastro"].get("telefone", "")
+                num_zap = ''.join(filter(str.isdigit, tel_bruto))
+                dias_passados = 0
+                acoes = dados_aluno.get("acoes", [])
+                if acoes:
+                    primeira_acao_data = acoes[0]["data"][:10]
+                    ultima_acao = acoes[-1]
+                    data_ultima_str = ultima_acao["data"][:10]
+                    try:
+                        data_ultima_obj = datetime.strptime(data_ultima_str, "%d/%m/%Y")
+                        dias_passados = (datetime.now() - data_ultima_obj).days
+                        if dias_passados >= 5:
+                            lembretes.append({
+                                "RA": str(linha[0]),
+                                "Nome": dados_aluno["cadastro"]["nome"],
+                                "Turma": dados_aluno["cadastro"]["turma"],
+                                "Dias sem contato": dias_passados,
+                                "Primeiro Contato": primeira_acao_data,
+                                "Última Ação Realizada": ultima_acao["acao"]
+                            })
+                    except Exception as e:
+                        registrar_log("DATA_ACAO_INVALIDA", f"RA {linha[0]}: {str(e)}", nivel="ALERTA")
+
+                alunos_ativos.append({
+                    "RA": str(linha[0]),
+                    "Nome": dados_aluno["cadastro"]["nome"],
+                    "Turma": dados_aluno["cadastro"]["turma"],
+                    "Zap": num_zap,
+                    "Email": dados_aluno["cadastro"].get("email", ""),
+                    "Responsavel": dados_aluno["cadastro"].get("responsavel", ""),
+                    "Dias": dias_passados
+                })
+
+    df_lemb = pd.DataFrame(lembretes) if lembretes else pd.DataFrame()
+    if not df_lemb.empty:
+        if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
+            mapa_freq = (
+                st.session_state.dados_escola[["RA", "Presenca_Anual"]]
+                .dropna(subset=["RA"])
+                .drop_duplicates(subset=["RA"], keep="last")
+                .set_index("RA")["Presenca_Anual"]
+                .to_dict()
+            )
+            df_lemb["Frequência BI"] = df_lemb["RA"].map(mapa_freq)
+        else:
+            df_lemb["Frequência BI"] = None
+
+        prioridades = df_lemb.apply(
+            lambda r: classificar_prioridade(
+                int(r.get("Dias sem contato", 0)),
+                r.get("Frequência BI") if pd.notnull(r.get("Frequência BI")) else None,
+            ),
+            axis=1,
+        )
+        df_lemb["Prioridade"] = [p[0] for p in prioridades]
+        df_lemb["Score"] = [p[1] for p in prioridades]
+        df_lemb = df_lemb.sort_values(by=["Score", "Dias sem contato"], ascending=False)
+
+    col_p1, col_p2, col_p3, col_p4 = st.columns(4)
+    col_p1.metric("Alunos em acompanhamento", len(alunos_ativos))
+    col_p2.metric("Casos parados (>=5 dias)", len(df_lemb))
+    col_p3.metric("Casos críticos", len(df_lemb[df_lemb["Prioridade"].str.contains("Crítica")]) if not df_lemb.empty else 0)
+    col_p4.metric("Sem contato >10 dias", len(df_lemb[df_lemb["Dias sem contato"] > 10]) if not df_lemb.empty else 0)
 
     tab1, tab2 = st.tabs(["📲 Disparo em Massa (WhatsApp)", "⚠️ Casos Parados"])
 
@@ -703,12 +695,50 @@ elif menu == "Painel de Lembretes e Disparo":
         st.write("A mensagem abaixo já está formatada com as regras institucionais e o link da Sala do Futuro.")
         
         texto_base = "⚠️ *Notificação Escolar - EE Dr. Américo Brasiliense*\n\nPrezado(a) responsável,\n\nInformamos que a frequência escolar do(a) estudante encontra-se em nível crítico e em acompanhamento intensivo pela nossa equipe.\n\nCaso a frequência não aumente nos próximos 15 dias, o caso será encaminhado ao *Conselho Tutelar*.\n\nPedimos que acompanhe a frequência pela Sala do Futuro: https://saladofuturo.educacao.sp.gov.br/login-responsaveis \n\nPara sanar dúvidas ou justificar faltas, compareça à escola presencialmente às *terças ou quintas-feiras, das 14:00 às 20:00*, e procure por Giovana (Vice-diretora), Elenir (Coordenadora) ou Vinicius (Diretor)."
-        
         msg_padrao = st.text_area("Mensagem Padrão para Disparo:", value=texto_base, height=250)
-        
-        if not alunos_ativos: st.info("Nenhum aluno em acompanhamento na nuvem no momento.")
+
+        if not alunos_ativos:
+            st.info("Nenhum aluno em acompanhamento na nuvem no momento.")
         else:
             st.write(f"**Total na lista de disparo:** {len(alunos_ativos)} alunos")
+            opcoes_disparo = [f"{a['Nome']} | RA {a['RA']} | {a['Turma']}" for a in alunos_ativos]
+            selecionados = st.multiselect("Selecione alunos para ações em massa:", opcoes_disparo)
+            selecionados_ra = [item.split("| RA ")[1].split(" |")[0].strip() for item in selecionados] if selecionados else []
+            selecionados_obj = [a for a in alunos_ativos if a["RA"] in selecionados_ra]
+
+            if selecionados_obj:
+                st.markdown("#### Ações em massa")
+                m1, m2, m3 = st.columns(3)
+                contatos_zap = [a for a in selecionados_obj if a.get("Zap")]
+                contatos_mail = [a for a in selecionados_obj if a.get("Email") and "@" in a.get("Email")]
+
+                if contatos_zap:
+                    texto_links = "\n".join([f"- {a['Nome']}: https://wa.me/55{a['Zap']}?text={urllib.parse.quote(msg_padrao)}" for a in contatos_zap])
+                    m1.download_button("📥 Links WhatsApp (TXT)", data=texto_links, file_name=f"links_whatsapp_{datetime.now().strftime('%d%m%Y_%H%M')}.txt", use_container_width=True)
+                else:
+                    m1.button("📥 Links WhatsApp (TXT)", disabled=True, use_container_width=True)
+
+                if contatos_mail:
+                    linhas_email = []
+                    for a in contatos_mail:
+                        linhas_email += [f"Nome: {a['Nome']}", f"E-mail: {a['Email']}", "Assunto: Notificação Escolar - Busca Ativa", f"Mensagem: {texto_base}", ""]
+                    m2.download_button("📥 E-mails em massa (TXT)", data="\n".join(linhas_email), file_name=f"emails_massa_{datetime.now().strftime('%d%m%Y_%H%M')}.txt", use_container_width=True)
+                else:
+                    m2.button("📥 E-mails em massa (TXT)", disabled=True, use_container_width=True)
+
+                if m3.button("📄 Gerar Cartas em Massa (PDF)", use_container_width=True):
+                    pdf_massa = FPDF()
+                    for al in selecionados_obj:
+                        pdf_massa.add_page()
+                        pdf_massa.set_font("Arial", "B", 14); pdf_massa.cell(0, 10, txt("ESCOLA ESTADUAL DOUTOR AMÉRICO BRASILIENSE"), 0, 1, "C")
+                        pdf_massa.set_font("Arial", "B", 12); pdf_massa.cell(0, 10, txt("NOTIFICAÇÃO DE COMPARECIMENTO"), 0, 1, "C")
+                        pdf_massa.ln(8); pdf_massa.set_font("Arial", "", 12)
+                        texto_c = (f"Responsável: {al.get('Responsavel') or '________________________'}\n\n"
+                                   f"Convocamos o(a) responsável pelo(a) estudante {al['Nome']} (RA {al['RA']}), turma {al['Turma']}, para comparecimento na escola com urgência devido à baixa frequência.\n\n"
+                                   f"Data de emissão: {datetime.now().strftime('%d/%m/%Y')}.")
+                        pdf_massa.multi_cell(0, 8, txt(texto_c))
+                    st.download_button("📥 Baixar Cartas em Massa (PDF)", data=pdf_massa.output(dest="S").encode("latin1", "ignore"), file_name=f"Cartas_Massa_{datetime.now().strftime('%d%m%Y_%H%M')}.pdf", use_container_width=True)
+
             for al in alunos_ativos:
                 c1, c2, c3 = st.columns([3, 1, 1])
                 c1.write(f"**{al['Nome']}** ({al['Turma']})")
@@ -723,33 +753,9 @@ elif menu == "Painel de Lembretes e Disparo":
         st.subheader("Casos com ação atrasada")
         st.caption("Lista automática para priorização de acompanhamento (5 dias ou mais sem nova intervenção).")
 
-        if not lembretes:
+        if df_lemb.empty:
             st.success("Nenhum caso parado no momento 🎉")
         else:
-            df_lemb = pd.DataFrame(lembretes)
-            if st.session_state.dados_escola is not None and not st.session_state.dados_escola.empty:
-                mapa_freq = (
-                    st.session_state.dados_escola[["RA", "Presenca_Anual"]]
-                    .dropna(subset=["RA"])
-                    .drop_duplicates(subset=["RA"], keep="last")
-                    .set_index("RA")["Presenca_Anual"]
-                    .to_dict()
-                )
-                df_lemb["Frequência BI"] = df_lemb["RA"].map(mapa_freq)
-            else:
-                df_lemb["Frequência BI"] = None
-
-            prioridades = df_lemb.apply(
-                lambda r: classificar_prioridade(
-                    int(r.get("Dias sem contato", 0)),
-                    r.get("Frequência BI") if pd.notnull(r.get("Frequência BI")) else None,
-                ),
-                axis=1,
-            )
-            df_lemb["Prioridade"] = [p[0] for p in prioridades]
-            df_lemb["Score"] = [p[1] for p in prioridades]
-            df_lemb = df_lemb.sort_values(by=["Score", "Dias sem contato"], ascending=False)
-
             total_critica = len(df_lemb[df_lemb["Prioridade"].str.contains("Crítica")])
             total_alta = len(df_lemb[df_lemb["Prioridade"].str.contains("Alta")])
             total_media = len(df_lemb[df_lemb["Prioridade"].str.contains("Média")])
@@ -759,18 +765,7 @@ elif menu == "Painel de Lembretes e Disparo":
             kc3.info(f"Média: {total_media}")
 
             st.dataframe(
-                df_lemb[
-                    [
-                        "Prioridade",
-                        "Nome",
-                        "RA",
-                        "Turma",
-                        "Dias sem contato",
-                        "Última Ação Realizada",
-                        "Primeiro Contato",
-                        "Frequência BI",
-                    ]
-                ],
+                df_lemb[["Prioridade", "Nome", "RA", "Turma", "Dias sem contato", "Última Ação Realizada", "Primeiro Contato", "Frequência BI"]],
                 use_container_width=True,
                 hide_index=True,
             )
@@ -778,23 +773,11 @@ elif menu == "Painel de Lembretes e Disparo":
             st.markdown("### Ações rápidas")
             for _, caso in df_lemb.head(15).iterrows():
                 c1, c2, c3 = st.columns([4, 1, 1])
-                freq_txt = (
-                    f"{caso['Frequência BI']*100:.1f}%"
-                    if pd.notnull(caso.get("Frequência BI"))
-                    else "sem BI"
-                )
-                c1.write(
-                    f"{caso['Prioridade']} **{caso['Nome']}** | RA {caso['RA']} | "
-                    f"{caso['Dias sem contato']} dias sem contato | Frequência: {freq_txt}"
-                )
+                freq_txt = f"{caso['Frequência BI']*100:.1f}%" if pd.notnull(caso.get("Frequência BI")) else "sem BI"
+                c1.write(f"{caso['Prioridade']} **{caso['Nome']}** | RA {caso['RA']} | {caso['Dias sem contato']} dias sem contato | Frequência: {freq_txt}")
                 if c2.button("Abrir prontuário", key=f"abrir_pront_{caso['RA']}"):
                     st.session_state.ra_selecionado = str(caso["RA"])
-                    st.session_state.menu_destino = "Prontuário do Aluno"
                     st.success("RA selecionado! Vá para 'Prontuário do Aluno' no menu lateral.")
                 if c3.button("Registrar lembrete", key=f"log_lemb_{caso['RA']}"):
-                    registrar_log(
-                        "LEMBRETE_CASO_PARADO",
-                        f"RA {caso['RA']} | {caso['Dias sem contato']} dias sem contato",
-                        nivel="INFO",
-                    )
+                    registrar_log("LEMBRETE_CASO_PARADO", f"RA {caso['RA']} | {caso['Dias sem contato']} dias sem contato", nivel="INFO")
                     st.success("Lembrete registrado no log da nuvem.")
