@@ -216,6 +216,7 @@ st.subheader("EE Dr. Américo Brasiliense")
 menu = st.sidebar.radio("Menu", ["Diagnóstico Geral", "Prontuário do Aluno", "Painel de Lembretes e Disparo"])
 
 if st.sidebar.button("Deslogar / Reiniciar"):
+    st.session_state.clear(); st.rerun()
     # ============================================================
 # MOMENTO 1 — DIAGNÓSTICO GERAL E GRÁFICOS
 # ============================================================
@@ -415,8 +416,7 @@ if menu == "Diagnóstico Geral":
             pdf.ln(5); pdf.set_font("Arial", "B", 12); pdf.cell(0, 8, txt("5. Análise Qualitativa"), 0, 1); pdf.set_font("Arial", "", 11)
             texto = analise_qualitativa if analise_qualitativa.strip() else "A análise aponta a evolução quantitativa dos dados e a mobilidade dos estudantes entre os degraus de risco, evidenciando o resultado contínuo do funil de ações da equipe escolar."
             pdf.multi_cell(0, 7, txt(texto))
-    st.session_state.clear(); st.rerun()
-                pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
+             pdf_out = pdf.output(dest="S").encode("latin1", "ignore")
             st.download_button("📥 Baixar Relatório Oficial Completo", data=pdf_out, file_name="Relatorio_SEDUC.pdf")
             if os.path.exists("evolucao_pdf.png"): os.remove("evolucao_pdf.png")
 
